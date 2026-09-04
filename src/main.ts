@@ -7,7 +7,6 @@ import {
   formatClock,
   formatMinutes,
   getSunState,
-  nearestCheckpoint,
 } from './sun';
 import { classifyTerraces, fetchTerraces } from './terraces';
 import type { BuildingFeature, TerraceFeature } from './types';
@@ -116,9 +115,6 @@ let loadingFinished = false;
 let shadowRequestId = 0;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 
-function checkpointKey(minutes: number, latitude: number, longitude: number): string {
-  return `${dateInput.value}:${nearestCheckpoint(minutes)}:${latitude.toFixed(3)}:${longitude.toFixed(3)}`;
-}
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
 
 function setLoadingStep(step: HTMLElement, state: 'active' | 'done'): void {
@@ -148,20 +144,14 @@ function renderSolarState(preview = true): void {
   const center = terraceMap.map.getCenter();
   const minutes = Number(timeInput.value);
   const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
-  const checkpointMinutes = nearestCheckpoint(minutes);
-
   shadowRequestId += 1;
   shadowWorker.postMessage({
     type: 'calculate',
     id: shadowRequestId,
-    key: checkpointKey(minutes, center.lat, center.lng),
     altitude: sun.altitude,
     azimuth: sun.azimuth,
     preview,
   });
-  if (preview) {
-    shadowStatus.textContent = `Preview rond ${formatMinutes(checkpointMinutes)}`;
-  }
   terraceMap.setSunLight(sun.altitude, sun.azimuth, sun.isDaylight);
 
   solarTime.textContent = formatMinutes(minutes);
@@ -184,22 +174,19 @@ shadowWorker.onmessage = (event: MessageEvent<{
   type: 'result';
   id: number;
   preview: boolean;
-  cached: boolean;
   shadows: FeatureCollection<MultiPolygon>;
 } | {
   type: 'error';
   id?: number;
-  phase: 'warm' | 'calculate';
+  phase: 'calculate';
   message: string;
 }>) => {
   const result = event.data;
   if (result.type === 'error') {
     console.error(`Schaduw-worker (${result.phase}): ${result.message}`);
     if (result.id === undefined || result.id === shadowRequestId) {
-      shadowStatus.textContent = result.phase === 'warm'
-        ? 'Previewcache gedeeltelijk beschikbaar'
-        : 'Schaduw tijdelijk niet beschikbaar';
-      if (result.phase === 'calculate') showNotice('De schaduwberekening kon niet worden uitgevoerd.');
+      shadowStatus.textContent = 'Schaduw tijdelijk niet beschikbaar';
+      showNotice('De schaduwberekening kon niet worden uitgevoerd.');
     }
     return;
   }
@@ -213,7 +200,7 @@ shadowWorker.onmessage = (event: MessageEvent<{
   terraceMap.setShadows(latestShadows);
   terraceMap.setTerraces(terraces);
   const shadowLabel = result.preview
-    ? result.cached ? 'Gecachte 15-minutenpreview' : 'Snelle schaduwpreview'
+    ? 'Snelle schaduwpreview'
     : 'Schaduwen bijgewerkt';
   shadowStatus.textContent = buildings.length > 0
     ? `${shadowLabel} · ${buildings.length} gebouwen`
@@ -269,7 +256,6 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
       setLoadingStep(loadBuildings, 'active');
       return;
     }
-    warmCheckpointCache();
     setLoadingStep(loadBuildings, 'done');
     setLoadingStep(loadSun, 'active');
     scheduleSolarRender(false);
@@ -290,28 +276,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   },
 });
 
-function warmCheckpointCache(): void {
-  if (buildings.length === 0) return;
-  const center = terraceMap.map.getCenter();
-  const minutes = Number(timeInput.value);
-  const checkpoints = Array.from({ length: 16 }, (_, index) => {
-    const checkpointMinutes = Math.max(0, Math.min(1435, nearestCheckpoint(minutes) + (index - 8) * 15));
-    const sun = getSunState(
-      dateAtMinutes(dateInput.value, checkpointMinutes),
-      center.lat,
-      center.lng,
-    );
-    return {
-      key: checkpointKey(checkpointMinutes, center.lat, center.lng),
-      altitude: sun.altitude,
-      azimuth: sun.azimuth,
-    };
-  });
-  shadowWorker.postMessage({ type: 'warm', checkpoints });
-}
-
 dateInput.addEventListener('change', () => {
-  warmCheckpointCache();
   scheduleSolarRender(false);
 });
 timeInput.addEventListener('input', () => scheduleSolarRender(true));

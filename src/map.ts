@@ -128,7 +128,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       return;
     }
 
-    const fingerprint = `${map.getZoom().toFixed(2)}:${[...seen].join('|')}`;
+    const fingerprint = `${map.getZoom().toFixed(2)}:${[...seen].sort().join('|')}`;
     if (fingerprint === buildingFingerprint) return;
     buildingFingerprint = fingerprint;
     callbacks.onBuildings(buildings, buildings.length === MAX_BUILDINGS);
