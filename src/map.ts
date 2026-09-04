@@ -41,6 +41,7 @@ type MapCallbacks = {
   onBuildings: (buildings: BuildingFeature[], capped: boolean) => void;
   onViewChange: (bounds: ViewBounds, zoom: number) => void;
   onError: (message: string) => void;
+  onMapReady?: () => void;
 };
 
 export type TerraceMap = {
@@ -114,6 +115,9 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       if (buildings.length === MAX_BUILDINGS) break;
     }
 
+    // Never publish an empty/partial tile snapshot: it would temporarily remove small buildings.
+    if (buildings.length === 0) return;
+
     const fingerprint = `${map.getZoom().toFixed(2)}:${[...seen].join('|')}`;
     if (fingerprint === buildingFingerprint) return;
     buildingFingerprint = fingerprint;
@@ -182,14 +186,15 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
         .addTo(map);
     });
 
-    extractBuildings();
+    callbacks.onMapReady?.();
     callbacks.onViewChange(getBounds(map), map.getZoom());
   });
 
+  // `idle` is the first point at which all visible vector tiles have settled.
   map.on('idle', extractBuildings);
   map.on('moveend', () => {
+    // Keep the previous complete snapshot while the new tiles are loading.
     buildingFingerprint = '';
-    extractBuildings();
     callbacks.onViewChange(getBounds(map), map.getZoom());
   });
   map.on('error', (event: ErrorEvent) => callbacks.onError(event.error?.message ?? 'Kaartdata kon niet laden.'));

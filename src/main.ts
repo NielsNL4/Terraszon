@@ -22,6 +22,20 @@ app.innerHTML = `
   <main class="shell">
     <div id="map" aria-label="Interactieve kaart van terrassen en gebouwschaduwen"></div>
 
+    <section id="loading" class="loading-screen" aria-live="polite" aria-busy="true">
+      <div class="loading-card">
+        <div class="loading-logo"><span class="sun-mark"></span>Terraszon</div>
+        <p>De stad en het zonlicht worden voorbereid...</p>
+        <div class="loading-progress"><span></span></div>
+        <ul class="loading-steps">
+          <li id="load-map">Kaart laden</li>
+          <li id="load-buildings">Gebouwen verzamelen</li>
+          <li id="load-sun">Schaduwen berekenen</li>
+          <li id="load-terraces">Terrassen ophalen</li>
+        </ul>
+      </div>
+    </section>
+
     <header class="brand-card map-card">
       <div class="wordmark"><span class="sun-mark"></span>Terraszon</div>
       <p>Vind een tafel in het licht.</p>
@@ -79,6 +93,11 @@ const dayState = requiredElement<HTMLElement>('#day-state');
 const sunrise = requiredElement<HTMLElement>('#sunrise');
 const sunset = requiredElement<HTMLElement>('#sunset');
 const notice = requiredElement<HTMLElement>('#notice');
+const loading = requiredElement<HTMLElement>('#loading');
+const loadMap = requiredElement<HTMLElement>('#load-map');
+const loadBuildings = requiredElement<HTMLElement>('#load-buildings');
+const loadSun = requiredElement<HTMLElement>('#load-sun');
+const loadTerracesStep = requiredElement<HTMLElement>('#load-terraces');
 
 let buildings: BuildingFeature[] = [];
 let terraces: TerraceFeature[] = [];
@@ -86,6 +105,22 @@ let latestShadows: FeatureCollection<MultiPolygon> = { type: 'FeatureCollection'
 let updateFrame = 0;
 let terraceRequest: AbortController | null = null;
 let noticeTimer = 0;
+let loadingFinished = false;
+const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
+
+function setLoadingStep(step: HTMLElement, state: 'active' | 'done'): void {
+  step.classList.remove('active', 'done');
+  step.classList.add(state);
+}
+
+function finishLoading(slowNetwork = false): void {
+  if (loadingFinished) return;
+  loadingFinished = true;
+  window.clearTimeout(loadingTimeout);
+  loading.setAttribute('aria-busy', 'false');
+  loading.classList.add('hidden');
+  if (slowNetwork) showNotice('De kaart is klaar. Terrassen worden nog op de achtergrond bijgewerkt.');
+}
 
 function showNotice(message: string, persistent = false): void {
   window.clearTimeout(noticeTimer);
@@ -115,6 +150,10 @@ function renderSolarState(): void {
   dayState.classList.toggle('night', !sun.isDaylight);
   sunrise.textContent = formatClock(sun.sunrise);
   sunset.textContent = formatClock(sun.sunset);
+  setLoadingStep(loadSun, 'done');
+  if (!loadingFinished
+    && loadBuildings.classList.contains('done')
+    && loadTerracesStep.classList.contains('done')) finishLoading();
 }
 
 function scheduleSolarRender(): void {
@@ -128,29 +167,40 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
     terraces = [];
     terraceMap.setTerraces([]);
     showNotice('Zoom verder in om terrassen en schaduwen te zien.');
+    setLoadingStep(loadTerracesStep, 'done');
     return;
   }
 
+  setLoadingStep(loadTerracesStep, 'active');
   terraceRequest = new AbortController();
   try {
     terraces = await fetchTerraces(bounds, terraceRequest.signal);
+    setLoadingStep(loadTerracesStep, 'done');
     scheduleSolarRender();
     if (terraces.length === 0) showNotice('Geen terrassen met OSM-terraslabel in dit kaartbeeld.');
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
+    setLoadingStep(loadTerracesStep, 'done');
     showNotice('Terrassen konden niet worden geladen. Probeer het later opnieuw.');
+    finishLoading(true);
   }
 }
 
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
+    setLoadingStep(loadBuildings, 'done');
+    setLoadingStep(loadSun, 'active');
     scheduleSolarRender();
     if (capped) showNotice('Veel gebouwen zichtbaar. Zoom verder in voor preciezere schaduwen.');
   },
   onViewChange(bounds, zoom) {
     scheduleSolarRender();
     void loadTerraces(bounds, zoom);
+  },
+  onMapReady() {
+    setLoadingStep(loadMap, 'done');
+    setLoadingStep(loadBuildings, 'active');
   },
   onError(message) {
     console.error(message);

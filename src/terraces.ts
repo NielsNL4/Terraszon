@@ -2,9 +2,14 @@ import type { FeatureCollection, MultiPolygon } from 'geojson';
 import { isPointInShadows } from './shadows';
 import type { TerraceFeature } from './types';
 
-const OVERPASS_ENDPOINT = 'https://overpass.private.coffee/api/interpreter';
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const CACHE_VERSION = 'v2';
+const REQUEST_TIMEOUT = 8_000;
 
 type Bounds = { south: number; west: number; north: number; east: number };
 
@@ -58,14 +63,34 @@ export async function fetchTerraces(bounds: Bounds, signal?: AbortSignal): Promi
 
   const bbox = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
   const query = `[out:json][timeout:20];nwr["amenity"~"^(cafe|restaurant)$"]["outdoor_seating"="yes"](${bbox});out center tags;`;
-  const response = await fetch(OVERPASS_ENDPOINT, {
-    method: 'POST',
-    body: new URLSearchParams({ data: query }),
-    signal,
-  });
-  if (!response.ok) throw new Error(`Overpass gaf status ${response.status}`);
+  let lastError: unknown;
+  let features: TerraceFeature[] | undefined;
 
-  const features = parseOverpass(await response.json() as OverpassResponse);
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    const timeoutController = new AbortController();
+    const timeout = window.setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT);
+    const abortFromCaller = () => timeoutController.abort();
+    signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: new URLSearchParams({ data: query }),
+        signal: timeoutController.signal,
+      });
+      if (!response.ok) throw new Error(`${endpoint} gaf status ${response.status}`);
+      features = parseOverpass(await response.json() as OverpassResponse);
+      break;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      lastError = error;
+    } finally {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', abortFromCaller);
+    }
+  }
+
+  if (!features) throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
   try {
     localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), features }));
   } catch {
