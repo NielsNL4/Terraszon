@@ -11,7 +11,7 @@ type GL = WebGLRenderingContext | WebGL2RenderingContext;
 const MAX_MASK_SIZE = 1_024;
 const VERTEX_BYTES = SHADOW_VERTEX_STRIDE * Float32Array.BYTES_PER_ELEMENT;
 
-const MASK_VERTEX_SHADER = `
+const MASK_VERTEX_SHADER_WEBGL1 = `
   attribute vec2 a_position;
   attribute float a_heightMercator;
   attribute float a_maxShadowMercator;
@@ -27,7 +27,7 @@ const MASK_VERTEX_SHADER = `
   }
 `;
 
-const MASK_FRAGMENT_SHADER = `
+const MASK_FRAGMENT_SHADER_WEBGL1 = `
   precision mediump float;
 
   void main() {
@@ -35,7 +35,7 @@ const MASK_FRAGMENT_SHADER = `
   }
 `;
 
-const COMPOSITE_VERTEX_SHADER = `
+const COMPOSITE_VERTEX_SHADER_WEBGL1 = `
   attribute vec2 a_position;
   attribute vec2 a_texCoord;
   varying vec2 v_texCoord;
@@ -46,7 +46,7 @@ const COMPOSITE_VERTEX_SHADER = `
   }
 `;
 
-const COMPOSITE_FRAGMENT_SHADER = `
+const COMPOSITE_FRAGMENT_SHADER_WEBGL1 = `
   precision mediump float;
   uniform sampler2D u_mask;
   uniform vec4 u_color;
@@ -59,6 +59,60 @@ const COMPOSITE_FRAGMENT_SHADER = `
   }
 `;
 
+const MASK_VERTEX_SHADER_WEBGL2 = `#version 300 es
+  in vec2 a_position;
+  in float a_heightMercator;
+  in float a_maxShadowMercator;
+  in float a_projected;
+  uniform mat4 u_matrix;
+  uniform vec2 u_shadowDirection;
+  uniform float u_cotAltitude;
+
+  void main() {
+    float shadowLength = min(a_heightMercator * u_cotAltitude, a_maxShadowMercator);
+    vec2 position = a_position + u_shadowDirection * shadowLength * a_projected;
+    gl_Position = u_matrix * vec4(position, 0.0, 1.0);
+  }
+`;
+
+const MASK_FRAGMENT_SHADER_WEBGL2 = `#version 300 es
+  precision mediump float;
+  out vec4 fragmentColor;
+
+  void main() {
+    fragmentColor = vec4(1.0);
+  }
+`;
+
+const COMPOSITE_VERTEX_SHADER_WEBGL2 = `#version 300 es
+  in vec2 a_position;
+  in vec2 a_texCoord;
+  out vec2 v_texCoord;
+
+  void main() {
+    v_texCoord = a_texCoord;
+    gl_Position = vec4(a_position, 0.0, 1.0);
+  }
+`;
+
+const COMPOSITE_FRAGMENT_SHADER_WEBGL2 = `#version 300 es
+  precision mediump float;
+  uniform sampler2D u_mask;
+  uniform vec4 u_color;
+  in vec2 v_texCoord;
+  out vec4 fragmentColor;
+
+  void main() {
+    float alpha = texture(u_mask, v_texCoord).a * u_color.a;
+    if (alpha < 0.001) discard;
+    fragmentColor = vec4(u_color.rgb * alpha, alpha);
+  }
+`;
+
+function isWebGL2(gl: GL): gl is WebGL2RenderingContext {
+  return typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
+}
+
 function createProgram(gl: GL, vertexSource: string, fragmentSource: string): WebGLProgram {
   const vertexShader = gl.createShader(gl.VERTEX_SHADER);
   const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
@@ -69,6 +123,18 @@ function createProgram(gl: GL, vertexSource: string, fragmentSource: string): We
   gl.shaderSource(fragmentShader, fragmentSource);
   gl.compileShader(vertexShader);
   gl.compileShader(fragmentShader);
+  const vertexCompiled = gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS) as boolean;
+  const fragmentCompiled = gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS) as boolean;
+  if (!vertexCompiled || !fragmentCompiled) {
+    const details = [
+      !vertexCompiled ? `Vertexshader: ${gl.getShaderInfoLog(vertexShader) ?? 'onbekende fout'}` : '',
+      !fragmentCompiled ? `Fragmentshader: ${gl.getShaderInfoLog(fragmentShader) ?? 'onbekende fout'}` : '',
+    ].filter(Boolean).join('\n');
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
+    gl.deleteProgram(program);
+    throw new Error(details);
+  }
   gl.attachShader(program, vertexShader);
   gl.attachShader(program, fragmentShader);
   gl.bindAttribLocation(program, 0, 'a_position');
@@ -173,8 +239,17 @@ export class BuildingShadowLayer implements CustomLayerInterface {
     this.map = map;
 
     try {
-      this.maskProgram = createProgram(gl, MASK_VERTEX_SHADER, MASK_FRAGMENT_SHADER);
-      this.compositeProgram = createProgram(gl, COMPOSITE_VERTEX_SHADER, COMPOSITE_FRAGMENT_SHADER);
+      const webgl2 = isWebGL2(gl);
+      this.maskProgram = createProgram(
+        gl,
+        webgl2 ? MASK_VERTEX_SHADER_WEBGL2 : MASK_VERTEX_SHADER_WEBGL1,
+        webgl2 ? MASK_FRAGMENT_SHADER_WEBGL2 : MASK_FRAGMENT_SHADER_WEBGL1,
+      );
+      this.compositeProgram = createProgram(
+        gl,
+        webgl2 ? COMPOSITE_VERTEX_SHADER_WEBGL2 : COMPOSITE_VERTEX_SHADER_WEBGL1,
+        webgl2 ? COMPOSITE_FRAGMENT_SHADER_WEBGL2 : COMPOSITE_FRAGMENT_SHADER_WEBGL1,
+      );
       this.meshBuffer = gl.createBuffer() ?? undefined;
       this.quadBuffer = gl.createBuffer() ?? undefined;
       this.maskTexture = gl.createTexture() ?? undefined;
@@ -256,7 +331,7 @@ export class BuildingShadowLayer implements CustomLayerInterface {
     gl.uniformMatrix4fv(
       locations.matrix,
       false,
-      matrixAtOrigin(options.modelViewProjectionMatrix, this.mesh.origin),
+      matrixAtOrigin(options.defaultProjectionData.mainMatrix, this.mesh.origin),
     );
     gl.uniform2fv(locations.direction, this.shadowDirection);
     gl.uniform1f(locations.cotAltitude, this.cotAltitude);
