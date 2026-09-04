@@ -1,4 +1,5 @@
 import * as maplibregl from 'maplibre-gl';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type {
   ErrorEvent,
   GeoJSONFeature,
@@ -83,6 +84,8 @@ function getBounds(map: MapLibreMap): ViewBounds {
 }
 
 export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks): TerraceMap {
+  // Vite must emit the module worker; otherwise MapLibre resolves it against the optimized bundle.
+  maplibregl.setWorkerUrl(workerUrl);
   const map = new maplibregl.Map({
     container,
     style: STYLE_URL,
