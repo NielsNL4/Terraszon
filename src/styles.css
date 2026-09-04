@@ -128,6 +128,14 @@ input { font: inherit; }
   font-size: 10px;
 }
 
+.shadow-status {
+  grid-column: 1 / -1;
+  min-height: 13px;
+  margin-top: 5px;
+  color: #9a9b93;
+  font-size: 9px;
+}
+
 .control-panel {
   right: 24px;
   bottom: 28px;

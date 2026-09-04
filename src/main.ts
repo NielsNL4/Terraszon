@@ -2,7 +2,6 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import type { FeatureCollection, MultiPolygon } from 'geojson';
 import { createTerraceMap, type ViewBounds } from './map';
-import { buildShadows } from './shadows';
 import { dateAtMinutes, formatClock, formatMinutes, getSunState } from './sun';
 import { classifyTerraces, fetchTerraces } from './terraces';
 import type { BuildingFeature, TerraceFeature } from './types';
@@ -45,6 +44,7 @@ app.innerHTML = `
       <span id="day-state" class="eyebrow">ZON BOVEN DE STAD</span>
       <strong id="solar-time">${formatMinutes(currentMinutes)}</strong>
       <span id="solar-detail">Zonpositie berekenen...</span>
+      <small id="shadow-status" class="shadow-status">Schaduw voorbereiden...</small>
     </section>
 
     <section class="control-panel map-card" aria-label="Zon en kaart instellen">
@@ -89,6 +89,7 @@ const dateInput = requiredElement<HTMLInputElement>('#date');
 const timeInput = requiredElement<HTMLInputElement>('#time');
 const solarTime = requiredElement<HTMLElement>('#solar-time');
 const solarDetail = requiredElement<HTMLElement>('#solar-detail');
+const shadowStatus = requiredElement<HTMLElement>('#shadow-status');
 const dayState = requiredElement<HTMLElement>('#day-state');
 const sunrise = requiredElement<HTMLElement>('#sunrise');
 const sunset = requiredElement<HTMLElement>('#sunset');
@@ -106,6 +107,8 @@ let updateFrame = 0;
 let terraceRequest: AbortController | null = null;
 let noticeTimer = 0;
 let loadingFinished = false;
+let shadowRequestId = 0;
+const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
 
 function setLoadingStep(step: HTMLElement, state: 'active' | 'done'): void {
@@ -131,15 +134,19 @@ function showNotice(message: string, persistent = false): void {
   }
 }
 
-function renderSolarState(): void {
+function renderSolarState(preview = true): void {
   const center = terraceMap.map.getCenter();
   const minutes = Number(timeInput.value);
   const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
 
-  latestShadows = buildShadows(buildings, sun.altitude, sun.azimuth);
-  terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
-  terraceMap.setShadows(latestShadows);
-  terraceMap.setTerraces(terraces);
+  shadowRequestId += 1;
+  shadowWorker.postMessage({
+    type: 'calculate',
+    id: shadowRequestId,
+    altitude: sun.altitude,
+    azimuth: sun.azimuth,
+    preview,
+  });
   terraceMap.setSunLight(sun.altitude, sun.azimuth, sun.isDaylight);
 
   solarTime.textContent = formatMinutes(minutes);
@@ -150,16 +157,42 @@ function renderSolarState(): void {
   dayState.classList.toggle('night', !sun.isDaylight);
   sunrise.textContent = formatClock(sun.sunrise);
   sunset.textContent = formatClock(sun.sunset);
+  shadowStatus.textContent = preview ? 'Snelle schaduwpreview' : 'Schaduwen bijwerken...';
+}
+
+function scheduleSolarRender(preview = true): void {
+  cancelAnimationFrame(updateFrame);
+  updateFrame = requestAnimationFrame(() => renderSolarState(preview));
+}
+
+shadowWorker.onmessage = (event: MessageEvent<{
+  type: 'result';
+  id: number;
+  preview: boolean;
+  shadows: FeatureCollection<MultiPolygon>;
+}>) => {
+  const result = event.data;
+  if (result.type !== 'result' || result.id !== shadowRequestId) return;
+
+  latestShadows = result.shadows;
+  const center = terraceMap.map.getCenter();
+  const minutes = Number(timeInput.value);
+  const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
+  terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
+  terraceMap.setShadows(latestShadows);
+  terraceMap.setTerraces(terraces);
+  shadowStatus.textContent = result.preview ? 'Snelle schaduwpreview' : 'Schaduwen bijgewerkt';
   setLoadingStep(loadSun, 'done');
   if (!loadingFinished
     && loadBuildings.classList.contains('done')
     && loadTerracesStep.classList.contains('done')) finishLoading();
-}
+};
 
-function scheduleSolarRender(): void {
-  cancelAnimationFrame(updateFrame);
-  updateFrame = requestAnimationFrame(renderSolarState);
-}
+shadowWorker.onerror = () => {
+  shadowStatus.textContent = 'Schaduwen tijdelijk niet beschikbaar';
+  showNotice('De schaduwberekening kon niet worden gestart.');
+  finishLoading(true);
+};
 
 async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   terraceRequest?.abort();
@@ -176,7 +209,7 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   try {
     terraces = await fetchTerraces(bounds, terraceRequest.signal);
     setLoadingStep(loadTerracesStep, 'done');
-    scheduleSolarRender();
+    scheduleSolarRender(false);
     if (terraces.length === 0) showNotice('Geen terrassen met OSM-terraslabel in dit kaartbeeld.');
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -189,9 +222,10 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
+    shadowWorker.postMessage({ type: 'set-buildings', buildings });
     setLoadingStep(loadBuildings, 'done');
     setLoadingStep(loadSun, 'active');
-    scheduleSolarRender();
+    scheduleSolarRender(false);
     if (capped) showNotice('Veel gebouwen zichtbaar. Zoom verder in voor preciezere schaduwen.');
   },
   onViewChange(bounds, zoom) {
@@ -208,8 +242,11 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   },
 });
 
-dateInput.addEventListener('change', scheduleSolarRender);
-timeInput.addEventListener('input', scheduleSolarRender);
+dateInput.addEventListener('change', () => scheduleSolarRender(false));
+timeInput.addEventListener('input', () => scheduleSolarRender(true));
+timeInput.addEventListener('change', () => scheduleSolarRender(false));
+timeInput.addEventListener('pointerup', () => scheduleSolarRender(false));
+timeInput.addEventListener('touchend', () => scheduleSolarRender(false));
 
 for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
   requiredElement<HTMLInputElement>(`#${layer}`).addEventListener('change', (event) => {
