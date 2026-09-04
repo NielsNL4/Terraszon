@@ -11,7 +11,7 @@ const EARTH_METERS_PER_DEGREE = 111_320;
 const MIN_SUN_ALTITUDE = 0.5;
 const MAX_SHADOW_LENGTH = 500;
 
-const UNION_BATCH_SIZE = 100;
+const UNION_BATCH_SIZE = 50;
 
 function translatePosition(position: Position, eastMeters: number, northMeters: number): Position {
   const latitude = position[1];
@@ -56,20 +56,14 @@ function projectPolygon(
   }
 }
 
-function unionShadowGeometries(geometries: ClippingMultiPolygon[]): ClippingMultiPolygon | null {
-  if (geometries.length === 0) return [];
+function unionShadowBatch(batch: ClippingMultiPolygon[]): ClippingMultiPolygon[] {
+  if (batch.length <= 1) return batch;
 
   try {
-    // Union batches first so a dense city does not create one huge polygon-clipping operation.
-    const batches: ClippingMultiPolygon[] = [];
-    for (let start = 0; start < geometries.length; start += UNION_BATCH_SIZE) {
-      const batch = geometries.slice(start, start + UNION_BATCH_SIZE);
-      batches.push(batch.length === 1 ? batch[0] : union(batch[0], ...batch.slice(1)));
-    }
-
-    return batches.length === 1 ? batches[0] : union(batches[0], ...batches.slice(1));
+    return [union(batch[0], ...batch.slice(1))];
   } catch {
-    return null;
+    // Keep valid individual shadows visible if one batch contains bad geometry.
+    return batch;
   }
 }
 
@@ -115,26 +109,24 @@ export function buildShadows(
 
   if (geometries.length === 0) return { type: 'FeatureCollection', features: [] };
 
-  const merged = unionShadowGeometries(geometries);
-  if (!merged) {
-    // A single malformed OSM polygon must not take down the entire shadow worker.
-    return {
-      type: 'FeatureCollection',
-      features: geometries.map((geometry, index) => ({
-        type: 'Feature',
-        properties: { buildingId: `fallback-${index}` },
-        geometry: { type: 'MultiPolygon', coordinates: geometry },
-      })),
-    };
+  // Sort nearby buildings together and never run one unbounded city-wide union.
+  geometries.sort((left, right) => {
+    const leftPoint = left[0]?.[0]?.[0] ?? [0, 0];
+    const rightPoint = right[0]?.[0]?.[0] ?? [0, 0];
+    return leftPoint[1] - rightPoint[1] || leftPoint[0] - rightPoint[0];
+  });
+  const batches: ClippingMultiPolygon[] = [];
+  for (let start = 0; start < geometries.length; start += UNION_BATCH_SIZE) {
+    batches.push(...unionShadowBatch(geometries.slice(start, start + UNION_BATCH_SIZE)));
   }
 
   return {
     type: 'FeatureCollection',
-    features: [{
+    features: batches.map((geometry, index) => ({
       type: 'Feature',
-      properties: { buildingId: 'merged' },
-      geometry: { type: 'MultiPolygon', coordinates: merged },
-    }],
+      properties: { buildingId: `batch-${index}` },
+      geometry: { type: 'MultiPolygon', coordinates: geometry },
+    })),
   };
 }
 

@@ -237,7 +237,6 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   try {
     terraces = await fetchTerraces(bounds, terraceRequest.signal);
     setLoadingStep(loadTerracesStep, 'done');
-    scheduleSolarRender(false);
     if (terraces.length === 0) showNotice('Geen terrassen met OSM-terraslabel in dit kaartbeeld.');
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
