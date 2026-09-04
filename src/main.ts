@@ -2,7 +2,13 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import type { FeatureCollection, MultiPolygon } from 'geojson';
 import { createTerraceMap, type ViewBounds } from './map';
-import { dateAtMinutes, formatClock, formatMinutes, getSunState } from './sun';
+import {
+  dateAtMinutes,
+  formatClock,
+  formatMinutes,
+  getSunState,
+  nearestCheckpoint,
+} from './sun';
 import { classifyTerraces, fetchTerraces } from './terraces';
 import type { BuildingFeature, TerraceFeature } from './types';
 
@@ -109,6 +115,10 @@ let noticeTimer = 0;
 let loadingFinished = false;
 let shadowRequestId = 0;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
+
+function checkpointKey(minutes: number, latitude: number, longitude: number): string {
+  return `${dateInput.value}:${nearestCheckpoint(minutes)}:${latitude.toFixed(3)}:${longitude.toFixed(3)}`;
+}
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
 
 function setLoadingStep(step: HTMLElement, state: 'active' | 'done'): void {
@@ -138,15 +148,20 @@ function renderSolarState(preview = true): void {
   const center = terraceMap.map.getCenter();
   const minutes = Number(timeInput.value);
   const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
+  const checkpointMinutes = nearestCheckpoint(minutes);
 
   shadowRequestId += 1;
   shadowWorker.postMessage({
     type: 'calculate',
     id: shadowRequestId,
+    key: checkpointKey(minutes, center.lat, center.lng),
     altitude: sun.altitude,
     azimuth: sun.azimuth,
     preview,
   });
+  if (preview) {
+    shadowStatus.textContent = `Preview rond ${formatMinutes(checkpointMinutes)}`;
+  }
   terraceMap.setSunLight(sun.altitude, sun.azimuth, sun.isDaylight);
 
   solarTime.textContent = formatMinutes(minutes);
@@ -169,9 +184,25 @@ shadowWorker.onmessage = (event: MessageEvent<{
   type: 'result';
   id: number;
   preview: boolean;
+  cached: boolean;
   shadows: FeatureCollection<MultiPolygon>;
+} | {
+  type: 'error';
+  id?: number;
+  phase: 'warm' | 'calculate';
+  message: string;
 }>) => {
   const result = event.data;
+  if (result.type === 'error') {
+    console.error(`Schaduw-worker (${result.phase}): ${result.message}`);
+    if (result.id === undefined || result.id === shadowRequestId) {
+      shadowStatus.textContent = result.phase === 'warm'
+        ? 'Previewcache gedeeltelijk beschikbaar'
+        : 'Schaduw tijdelijk niet beschikbaar';
+      if (result.phase === 'calculate') showNotice('De schaduwberekening kon niet worden uitgevoerd.');
+    }
+    return;
+  }
   if (result.type !== 'result' || result.id !== shadowRequestId) return;
 
   latestShadows = result.shadows;
@@ -181,7 +212,9 @@ shadowWorker.onmessage = (event: MessageEvent<{
   terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
   terraceMap.setShadows(latestShadows);
   terraceMap.setTerraces(terraces);
-  shadowStatus.textContent = result.preview ? 'Snelle schaduwpreview' : 'Schaduwen bijgewerkt';
+  shadowStatus.textContent = result.preview
+    ? result.cached ? 'Gecachte 15-minutenpreview' : 'Snelle schaduwpreview'
+    : 'Schaduwen bijgewerkt';
   setLoadingStep(loadSun, 'done');
   if (!loadingFinished
     && loadBuildings.classList.contains('done')
@@ -192,6 +225,12 @@ shadowWorker.onerror = () => {
   shadowStatus.textContent = 'Schaduwen tijdelijk niet beschikbaar';
   showNotice('De schaduwberekening kon niet worden gestart.');
   finishLoading(true);
+};
+
+shadowWorker.onmessageerror = () => {
+  console.error('Schaduw-worker kon zijn bericht niet terugsturen.');
+  shadowStatus.textContent = 'Schaduw tijdelijk niet beschikbaar';
+  showNotice('De schaduwgegevens konden niet worden overgedragen.');
 };
 
 async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
@@ -223,6 +262,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
     shadowWorker.postMessage({ type: 'set-buildings', buildings });
+    warmCheckpointCache();
     setLoadingStep(loadBuildings, 'done');
     setLoadingStep(loadSun, 'active');
     scheduleSolarRender(false);
@@ -242,7 +282,30 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   },
 });
 
-dateInput.addEventListener('change', () => scheduleSolarRender(false));
+function warmCheckpointCache(): void {
+  if (buildings.length === 0) return;
+  const center = terraceMap.map.getCenter();
+  const minutes = Number(timeInput.value);
+  const checkpoints = Array.from({ length: 16 }, (_, index) => {
+    const checkpointMinutes = Math.max(0, Math.min(1435, nearestCheckpoint(minutes) + (index - 8) * 15));
+    const sun = getSunState(
+      dateAtMinutes(dateInput.value, checkpointMinutes),
+      center.lat,
+      center.lng,
+    );
+    return {
+      key: checkpointKey(checkpointMinutes, center.lat, center.lng),
+      altitude: sun.altitude,
+      azimuth: sun.azimuth,
+    };
+  });
+  shadowWorker.postMessage({ type: 'warm', checkpoints });
+}
+
+dateInput.addEventListener('change', () => {
+  warmCheckpointCache();
+  scheduleSolarRender(false);
+});
 timeInput.addEventListener('input', () => scheduleSolarRender(true));
 timeInput.addEventListener('change', () => scheduleSolarRender(false));
 timeInput.addEventListener('pointerup', () => scheduleSolarRender(false));

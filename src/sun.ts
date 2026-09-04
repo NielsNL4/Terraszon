@@ -1,6 +1,8 @@
 import * as SunCalc from 'suncalc';
 import type { SunState } from './types';
 
+export const CHECKPOINT_INTERVAL = 15;
+
 export function dateAtMinutes(dateValue: string, minutes: number): Date {
   const [year, month, day] = dateValue.split('-').map(Number);
   const hours = Math.floor(minutes / 60);
@@ -34,4 +36,8 @@ export function formatMinutes(minutes: number): string {
   const hours = Math.floor(minutes / 60).toString().padStart(2, '0');
   const mins = (minutes % 60).toString().padStart(2, '0');
   return `${hours}:${mins}`;
+}
+
+export function nearestCheckpoint(minutes: number): number {
+  return Math.min(1435, Math.max(0, Math.round(minutes / CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL));
 }

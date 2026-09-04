@@ -1,4 +1,4 @@
-import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon, Position } from 'geojson';
+import type { FeatureCollection, MultiPolygon, Point, Polygon, Position } from 'geojson';
 import {
   union,
   type MultiPolygon as ClippingMultiPolygon,
@@ -11,7 +11,6 @@ const EARTH_METERS_PER_DEGREE = 111_320;
 const MIN_SUN_ALTITUDE = 0.5;
 const MAX_SHADOW_LENGTH = 500;
 
-type ShadowFeature = Feature<MultiPolygon, { buildingId: string }>;
 const UNION_BATCH_SIZE = 100;
 
 function translatePosition(position: Position, eastMeters: number, northMeters: number): Position {
@@ -57,17 +56,21 @@ function projectPolygon(
   }
 }
 
-function unionShadowGeometries(geometries: ClippingMultiPolygon[]): ClippingMultiPolygon {
+function unionShadowGeometries(geometries: ClippingMultiPolygon[]): ClippingMultiPolygon | null {
   if (geometries.length === 0) return [];
 
-  // Union batches first so a dense city does not create one huge polygon-clipping operation.
-  const batches: ClippingMultiPolygon[] = [];
-  for (let start = 0; start < geometries.length; start += UNION_BATCH_SIZE) {
-    const batch = geometries.slice(start, start + UNION_BATCH_SIZE);
-    batches.push(batch.length === 1 ? batch[0] : union(batch[0], ...batch.slice(1)));
-  }
+  try {
+    // Union batches first so a dense city does not create one huge polygon-clipping operation.
+    const batches: ClippingMultiPolygon[] = [];
+    for (let start = 0; start < geometries.length; start += UNION_BATCH_SIZE) {
+      const batch = geometries.slice(start, start + UNION_BATCH_SIZE);
+      batches.push(batch.length === 1 ? batch[0] : union(batch[0], ...batch.slice(1)));
+    }
 
-  return batches.length === 1 ? batches[0] : union(batches[0], ...batches.slice(1));
+    return batches.length === 1 ? batches[0] : union(batches[0], ...batches.slice(1));
+  } catch {
+    return null;
+  }
 }
 
 export function shadowVector(
@@ -113,13 +116,26 @@ export function buildShadows(
   if (geometries.length === 0) return { type: 'FeatureCollection', features: [] };
 
   const merged = unionShadowGeometries(geometries);
-  const feature: ShadowFeature = {
-    type: 'Feature',
-    properties: { buildingId: 'merged' },
-    geometry: { type: 'MultiPolygon', coordinates: merged },
-  };
+  if (!merged) {
+    // A single malformed OSM polygon must not take down the entire shadow worker.
+    return {
+      type: 'FeatureCollection',
+      features: geometries.map((geometry, index) => ({
+        type: 'Feature',
+        properties: { buildingId: `fallback-${index}` },
+        geometry: { type: 'MultiPolygon', coordinates: geometry },
+      })),
+    };
+  }
 
-  return { type: 'FeatureCollection', features: [feature] };
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: { buildingId: 'merged' },
+      geometry: { type: 'MultiPolygon', coordinates: merged },
+    }],
+  };
 }
 
 function pointInRing(point: Position, ring: Position[]): boolean {
