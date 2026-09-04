@@ -8,11 +8,11 @@ import type {
   Map as MapLibreMap,
 } from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
-import type { BuildingFeature, TerraceFeature } from './types';
+import { BuildingShadowLayer } from './shadow-layer';
+import type { BuildingFeature, ShadowMesh, TerraceFeature } from './types';
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 const BUILDING_LAYER = 'building-3d';
-const SHADOW_SOURCE = 'terraszon-shadows';
 const SHADOW_LAYER = 'terraszon-shadows';
 const TERRACE_SOURCE = 'terraszon-terraces';
 const TERRACE_LAYER = 'terraszon-terraces';
@@ -22,13 +22,8 @@ const DEFAULT_POI_LAYERS = [
   'poi_r1',
   'poi_transit',
 ];
-// GeoJSON union and transfer become noticeable above this range on mid-tier phones.
+// Bound worker memory and one-time GPU uploads on dense, mid-tier mobile devices.
 const MAX_BUILDINGS = 1_500;
-
-const emptyShadows: FeatureCollection<MultiPolygon> = {
-  type: 'FeatureCollection',
-  features: [],
-};
 
 const emptyTerraces: FeatureCollection<TerraceFeature['geometry'], TerraceFeature['properties']> = {
   type: 'FeatureCollection',
@@ -46,7 +41,7 @@ type MapCallbacks = {
 
 export type TerraceMap = {
   map: MapLibreMap;
-  setShadows: (shadows: FeatureCollection<MultiPolygon>) => void;
+  setShadowMesh: (mesh: ShadowMesh) => void;
   setTerraces: (terraces: TerraceFeature[]) => void;
   setOnlySunny: (enabled: boolean) => void;
   setVisibility: (layer: 'buildings' | 'shadows' | 'terraces', visible: boolean) => void;
@@ -70,6 +65,28 @@ function asBuilding(feature: GeoJSONFeature): BuildingFeature | null {
     geometry: feature.geometry as Polygon | MultiPolygon,
     properties: { id, height: buildingHeight(feature.properties) },
   };
+}
+
+function geometryFingerprint(geometry: Polygon | MultiPolygon): string {
+  let hash = 2_166_136_261;
+  let pointCount = 0;
+  const append = (value: number) => {
+    hash ^= value;
+    hash = Math.imul(hash, 16_777_619);
+  };
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  for (const polygon of polygons) {
+    append(polygon.length);
+    for (const ring of polygon) {
+      append(ring.length);
+      for (const point of ring) {
+        append(Math.round(point[0] * 10_000_000));
+        append(Math.round(point[1] * 10_000_000));
+        pointCount += 1;
+      }
+    }
+  }
+  return `${pointCount}:${hash >>> 0}`;
 }
 
 function getBounds(map: MapLibreMap): ViewBounds {
@@ -103,9 +120,29 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
 
   let buildingFingerprint = '';
   let ready = false;
+  let shadowLayer: BuildingShadowLayer | null = null;
+  let shadowMesh: ShadowMesh = { origin: [0, 0], vertices: new Float32Array() };
+  let terraceData: TerraceFeature[] = [];
+  let onlySunny = false;
+  let sunState = { altitude: 0, azimuth: 0, daylight: false };
+  const visibility = { buildings: true, shadows: true, terraces: true };
+
+  const installShadowLayer = () => {
+    if (!map.getLayer(BUILDING_LAYER) || map.getLayer(SHADOW_LAYER)) return;
+    shadowLayer = new BuildingShadowLayer((message) => {
+      callbacks.onError(`GPU-schaduwen konden niet starten: ${message}`);
+    });
+    shadowLayer.setMesh(shadowMesh);
+    shadowLayer.setSun(sunState.altitude, sunState.azimuth, sunState.daylight);
+    map.addLayer(shadowLayer, BUILDING_LAYER);
+    map.setLayoutProperty(SHADOW_LAYER, 'visibility', visibility.shadows ? 'visible' : 'none');
+  };
 
   const extractBuildings = () => {
-    if (!ready || map.getZoom() < 14) {
+    if (!ready) return;
+    if (map.getZoom() < 14) {
+      if (buildingFingerprint === 'below-14') return;
+      buildingFingerprint = 'below-14';
       callbacks.onBuildings([], false);
       return;
     }
@@ -116,14 +153,22 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     // actually available after MapLibre's tile and style processing.
     for (const feature of map.queryRenderedFeatures({ layers: [BUILDING_LAYER] })) {
       const building = asBuilding(feature);
-      if (!building || seen.has(building.properties.id)) continue;
-      seen.add(building.properties.id);
+      if (!building) continue;
+      const fragmentKey = [
+        building.properties.id,
+        building.properties.height,
+        geometryFingerprint(building.geometry),
+      ].join(':');
+      if (seen.has(fragmentKey)) continue;
+      seen.add(fragmentKey);
       buildings.push(building);
       if (buildings.length === MAX_BUILDINGS) break;
     }
 
-    // Never publish an empty/partial tile snapshot: it would temporarily remove small buildings.
     if (buildings.length === 0) {
+      const fingerprint = `empty:${map.getZoom().toFixed(2)}`;
+      if (fingerprint === buildingFingerprint) return;
+      buildingFingerprint = fingerprint;
       callbacks.onBuildings([], false);
       return;
     }
@@ -143,16 +188,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-color', '#d8d3c8');
     map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-opacity', 0.92);
 
-    map.addSource(SHADOW_SOURCE, { type: 'geojson', data: emptyShadows });
-    map.addLayer({
-      id: SHADOW_LAYER,
-      type: 'fill',
-      source: SHADOW_SOURCE,
-      paint: {
-        'fill-color': '#53606c',
-        'fill-opacity': 0.32,
-      },
-    }, BUILDING_LAYER);
+    installShadowLayer();
 
     map.addSource(TERRACE_SOURCE, { type: 'geojson', data: emptyTerraces });
     map.addLayer({
@@ -205,32 +241,77 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     buildingFingerprint = '';
     callbacks.onViewChange(getBounds(map), map.getZoom());
   });
+  map.on('webglcontextlost', () => {
+    ready = false;
+    shadowLayer = null;
+  });
+  map.on('webglcontextrestored', () => {
+    map.once('style.load', () => {
+      ready = true;
+      map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-color', '#d8d3c8');
+      installShadowLayer();
+      map.setPaintProperty(
+        BUILDING_LAYER,
+        'fill-extrusion-opacity',
+        visibility.buildings ? 0.92 : 0,
+      );
+      const terraceSource = map.getSource(TERRACE_SOURCE) as GeoJSONSource | undefined;
+      terraceSource?.setData({ type: 'FeatureCollection', features: terraceData });
+      if (map.getLayer(TERRACE_LAYER)) {
+        map.setFilter(TERRACE_LAYER, onlySunny ? ['==', ['get', 'status'], 'sun'] : null);
+        map.setLayoutProperty(
+          TERRACE_LAYER,
+          'visibility',
+          visibility.terraces ? 'visible' : 'none',
+        );
+      }
+      map.setLight({
+        anchor: 'map',
+        color: sunState.daylight ? '#fff4d5' : '#b8c2cf',
+        intensity: sunState.daylight ? 0.48 : 0.2,
+        position: [1.5, sunState.azimuth, Math.max(5, 90 - sunState.altitude)],
+      });
+    });
+  });
   map.on('error', (event: ErrorEvent) => callbacks.onError(event.error?.message ?? 'Kaartdata kon niet laden.'));
 
   return {
     map,
-    setShadows(shadows) {
-      if (!ready) return;
-      (map.getSource(SHADOW_SOURCE) as GeoJSONSource).setData(shadows);
+    setShadowMesh(mesh) {
+      shadowMesh = mesh;
+      shadowLayer?.setMesh(mesh);
     },
     setTerraces(terraces) {
+      terraceData = terraces;
       if (!ready) return;
-      (map.getSource(TERRACE_SOURCE) as GeoJSONSource).setData({
+      const source = map.getSource(TERRACE_SOURCE) as GeoJSONSource | undefined;
+      if (!source) return;
+      source.setData({
         type: 'FeatureCollection',
         features: terraces,
       });
     },
     setOnlySunny(enabled) {
-      if (!ready) return;
+      onlySunny = enabled;
+      if (!ready || !map.getLayer(TERRACE_LAYER)) return;
       map.setFilter(TERRACE_LAYER, enabled ? ['==', ['get', 'status'], 'sun'] : null);
     },
     setVisibility(layer, visible) {
+      visibility[layer] = visible;
       if (!ready) return;
-      const layerId = layer === 'buildings' ? BUILDING_LAYER
-        : layer === 'shadows' ? SHADOW_LAYER : TERRACE_LAYER;
-      map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+      if (layer === 'buildings') {
+        // Keep the layer queryable while visually hidden; shadows use its rendered features.
+        map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-opacity', visible ? 0.92 : 0);
+        return;
+      }
+      const layerId = layer === 'shadows' ? SHADOW_LAYER : TERRACE_LAYER;
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+      }
     },
     setSunLight(altitude, azimuth, daylight) {
+      sunState = { altitude, azimuth, daylight };
+      shadowLayer?.setSun(altitude, azimuth, daylight);
       if (!ready) return;
       map.setLight({
         anchor: 'map',

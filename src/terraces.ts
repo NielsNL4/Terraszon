@@ -1,6 +1,4 @@
-import type { FeatureCollection, MultiPolygon } from 'geojson';
-import { isPointInShadows } from './shadows';
-import type { TerraceFeature } from './types';
+import type { TerraceFeature, TerraceStatusResult } from './types';
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
@@ -99,18 +97,16 @@ export async function fetchTerraces(bounds: Bounds, signal?: AbortSignal): Promi
   return features;
 }
 
-export function classifyTerraces(
+export function applyTerraceStatuses(
   terraces: TerraceFeature[],
-  shadows: FeatureCollection<MultiPolygon>,
-  isDaylight: boolean,
+  statuses: TerraceStatusResult[],
 ): TerraceFeature[] {
+  const statusById = new Map(statuses.map(({ id, status }) => [id, status]));
   return terraces.map((terrace) => ({
     ...terrace,
     properties: {
       ...terrace.properties,
-      status: !isDaylight
-        ? 'night'
-        : isPointInShadows(terrace.geometry, shadows) ? 'shade' : 'sun',
+      status: statusById.get(terrace.properties.id) ?? terrace.properties.status,
     },
   }));
 }

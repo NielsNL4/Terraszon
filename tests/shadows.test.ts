@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildShadows, isPointInShadows, shadowVector } from '../src/shadows';
+import {
+  buildShadowMesh,
+  classifyTerracePoints,
+  isPointInBuildingShadows,
+  prepareShadowPolygons,
+  shadowVector,
+} from '../src/shadows';
 import type { BuildingFeature } from '../src/types';
 
 const building: BuildingFeature = {
@@ -30,38 +36,45 @@ describe('shadow projection', () => {
     expect(shadowVector(10, -1, 90)).toBeNull();
   });
 
-  it('creates polygons usable for point classification', () => {
-    const shadows = buildShadows([building], 45, 180);
-    expect(shadows.features).toHaveLength(1);
-    expect(shadows.features[0].geometry.coordinates).toHaveLength(6);
-    expect(isPointInShadows(
-      { type: 'Point', coordinates: [6.000025, 53.00007] },
-      shadows,
-    )).toBe(true);
-    expect(isPointInShadows(
-      { type: 'Point', coordinates: [6.001, 53] },
-      shadows,
-    )).toBe(false);
+  it('builds one static triangle mesh for GPU projection', () => {
+    const mesh = buildShadowMesh(prepareShadowPolygons([building]));
+    expect(mesh.vertices).toBeInstanceOf(Float32Array);
+    expect(mesh.vertices).toHaveLength(36 * 5);
+    expect([...mesh.vertices].every(Number.isFinite)).toBe(true);
+    expect(new Set([...mesh.vertices].filter((_, index) => index % 5 === 4)))
+      .toEqual(new Set([0, 1]));
   });
 
-  it('keeps building shadows as separate features', () => {
-    const secondBuilding: BuildingFeature = {
+  it('classifies a point against the swept footprint without creating polygons', () => {
+    const polygons = prepareShadowPolygons([building]);
+    expect(isPointInBuildingShadows([6.000025, 53.00007], polygons, 45, 180)).toBe(true);
+    expect(isPointInBuildingShadows([6.001, 53], polygons, 45, 180)).toBe(false);
+  });
+
+  it('keeps courtyard holes open when the sun is directly overhead', () => {
+    const withCourtyard: BuildingFeature = {
       ...building,
-      properties: { id: 'two', height: 8 },
       geometry: {
         type: 'Polygon',
-        coordinates: [[
-          [6.001, 53],
-          [6.00105, 53],
-          [6.00105, 53.00002],
-          [6.001, 53.00002],
-          [6.001, 53],
-        ]],
+        coordinates: [
+          [[6, 53], [6.0001, 53], [6.0001, 53.0001], [6, 53.0001], [6, 53]],
+          [[6.00003, 53.00003], [6.00007, 53.00003], [6.00007, 53.00007], [6.00003, 53.00007], [6.00003, 53.00003]],
+        ],
       },
     };
-
-    const shadows = buildShadows([building, secondBuilding], 45, 180);
-    expect(shadows.features.map((feature) => feature.properties.buildingId)).toEqual(['one', 'two']);
+    const polygons = prepareShadowPolygons([withCourtyard]);
+    expect(isPointInBuildingShadows([6.00005, 53.00005], polygons, 90, 180)).toBe(false);
+    expect(isPointInBuildingShadows([6.00001, 53.00001], polygons, 90, 180)).toBe(true);
   });
 
+  it('returns compact statuses and applies night as an explicit override', () => {
+    const polygons = prepareShadowPolygons([building]);
+    const terraces = [{ id: 'one', coordinates: [6.000025, 53.00007] }];
+    expect(classifyTerracePoints(terraces, polygons, 45, 180, true)).toEqual([
+      { id: 'one', status: 'shade' },
+    ]);
+    expect(classifyTerracePoints(terraces, polygons, 45, 180, false)).toEqual([
+      { id: 'one', status: 'night' },
+    ]);
+  });
 });

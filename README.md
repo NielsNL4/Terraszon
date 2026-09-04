@@ -8,7 +8,7 @@ Terraszon is een statische webapp die laat zien welke horecaterrassen op een gek
 - MapLibre GL JS met de keyless Liberty-stijl van OpenFreeMap.
 - OpenStreetMap-gebouwen uit de OpenFreeMap-vector tiles.
 - SunCalc voor zonpositie, zonsopkomst en zonsondergang.
-- Polygon Clipping voor het samenvoegen van geprojecteerde schaduwvlakken.
+- Earcut voor eenmalige triangulatie van gebouwfootprints in een Web Worker.
 - Overpass API voor horeca met `outdoor_seating=yes`.
 
 ## Lokaal ontwikkelen
@@ -44,9 +44,9 @@ Vite gebruikt een relatieve `base`, waardoor assets zowel op `<username>.github.
 
 ## Werking
 
-Na het laden vraagt MapLibre de zichtbare gebouwen uit de vectorbron op. Per footprint wordt de schaduwlengte berekend als `hoogte / tan(zonhoogte)`. De footprint wordt tegenovergesteld aan de zonazimuth verschoven; de tussenliggende zijvlakken worden met het verschoven vlak samengevoegd tot GeoJSON. Daarna worden alle gebouwschaduwen globaal ge-uniond, zodat overlappende schaduwen niet meerdere keren met opacity over elkaar heen worden getekend.
+Na het laden vraagt MapLibre de zichtbare gebouwen uit de gerenderde `building-3d`-laag op. Een Web Worker trianguleert de footprints eenmalig tot een compacte mesh. Een eigen MapLibre WebGL-laag bewaart deze mesh op de GPU en projecteert de bovenste vertices tegenovergesteld aan de zon. Het resultaat wordt eerst als binair masker getekend en daarna eenmaal met de kaart gecombineerd. Daardoor worden overlappende driehoeken en gebouwen nooit extra donker.
 
-Gebouwgeometrie wordt alleen opnieuw uitgelezen wanneer de kaart beweegt of nieuwe tiles beschikbaar zijn. Bij het verschuiven van de tijdslider wordt de bestaande geometrie hergebruikt. De schaduwberekening draait in een Web Worker, zodat polygon-union de kaartinteractie niet blokkeert. Tijdens slepen gebruikt de worker een in-memory cache met de dichtstbijzijnde 15-minutenpreview en maximaal 300 gebouwen; op de achtergrond worden 16 checkpoints rond het huidige tijdstip voorbereid. Na loslaten wordt de volledige set voor het exacte tijdstip berekend. Alleen het nieuwste workerresultaat wordt toegepast. De checkpointcache is bewust begrensd op 16 items om geheugen- en batterijgebruik te beperken. Updates worden per animation frame samengevoegd, de polygon-union gebeurt in batches van 100 gebouwen en maximaal 1.500 gebouwen worden tegelijkertijd verwerkt. Onder zoomniveau 14 worden geen gebouwschaduwen berekend. Schaduwen bij een extreem lage zon zijn begrensd op 500 meter.
+Gebouwgeometrie wordt alleen opnieuw uitgelezen wanneer de kaart beweegt of nieuwe tiles beschikbaar zijn. Tijdens het slepen van de tijdslider veranderen uitsluitend twee kleine shaderwaarden voor richting en lengte; er wordt geen GeoJSON opgebouwd, gekopieerd of opnieuw door MapLibre geïndexeerd. Sliderupdates worden per animation frame samengevoegd. Na loslaten classificeert de worker de terraspunten rechtstreeks tegen de gebouwfootprints, zonder schaduwpolygonen te materialiseren. Alleen resultaten voor de nieuwste gebouwsnapshot en tijdkeuze worden toegepast. Maximaal 1.500 gebouwen worden tegelijkertijd verwerkt, onder zoomniveau 14 worden geen gebouwschaduwen berekend en extreem lange schaduwen zijn begrensd op 500 meter.
 
 Overpass-resultaten worden per afgeronde bounding box 24 uur in `localStorage` bewaard. Requests starten alleen nadat de kaartbeweging eindigt. Hiermee blijft het gebruik van de publieke API beperkt, maar publieke Overpass-instances geven geen beschikbaarheidsgarantie.
 
@@ -57,12 +57,13 @@ Overpass-resultaten worden per afgeronde bounding box 24 uur in `localStorage` b
 - Een OSM-horecapunt is meestal niet de exacte positie of contour van het terras. De zon/schaduwstatus is daarom indicatief.
 - Alleen locaties met `outdoor_seating=yes` en `amenity=cafe|restaurant` worden opgehaald. Ontbrekende OSM-tags betekenen dat een bestaand terras niet zichtbaar kan zijn. Algemene POI-lagen van de basiskaart zijn verborgen.
 - Bomen, luifels, parasols, hoogteverschillen en tijdelijke objecten worden niet meegenomen.
+- Alleen gebouwen uit het geladen kaartbeeld worden verwerkt; vlak langs de rand kan een schaduw van een nog niet geladen gebouw ontbreken.
 - Bij zon onder de horizon worden locaties als zonder direct daglicht gemarkeerd en wordt geen slagschaduwlaag getekend.
 
 ## Mogelijke vervolgstappen
 
 - Nederlandse 3D BAG/PDOK-hoogtes koppelen en OSM-hoogtes gericht vervangen.
-- Schaduwprojectie naar een Web Worker of custom WebGL-laag verplaatsen voor grotere kaartbeelden.
+- Een browsergestuurde visuele regressietest toevoegen voor WebGL1 en WebGL2.
 - Terraspolygonen of een handmatige terraspositie gebruiken in plaats van het horecacentrum.
 - De tijdzone automatisch afleiden uit de kaartlocatie.
 - Beschikbaarheids- of bierprijsdata als aparte, optionele bron toevoegen.

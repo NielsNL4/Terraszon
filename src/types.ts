@@ -1,4 +1,4 @@
-import type { Feature, MultiPolygon, Point, Polygon } from 'geojson';
+import type { Feature, MultiPolygon, Point, Polygon, Position } from 'geojson';
 
 export type SunState = {
   altitude: number;
@@ -15,6 +15,11 @@ export type BuildingProperties = {
 
 export type BuildingFeature = Feature<Polygon | MultiPolygon, BuildingProperties>;
 
+export type ShadowMesh = {
+  origin: [number, number];
+  vertices: Float32Array;
+};
+
 export type TerraceStatus = 'sun' | 'shade' | 'night';
 
 export type TerraceProperties = {
@@ -25,3 +30,13 @@ export type TerraceProperties = {
 };
 
 export type TerraceFeature = Feature<Point, TerraceProperties>;
+
+export type TerracePoint = {
+  id: string;
+  coordinates: Position;
+};
+
+export type TerraceStatusResult = {
+  id: string;
+  status: TerraceStatus;
+};

@@ -1,30 +1,82 @@
-import { buildShadows } from './shadows';
-import type { BuildingFeature } from './types';
+import type { ShadowWorkerRequest, ShadowWorkerResponse } from './shadow-protocol';
+import {
+  buildShadowMesh,
+  classifyTerracePoints,
+  prepareShadowPolygons,
+  type PreparedShadowPolygon,
+} from './shadows';
 
-type ShadowRequest =
-  | { type: 'set-buildings'; buildings: BuildingFeature[] }
-  | { type: 'calculate'; id: number; altitude: number; azimuth: number };
+type WorkerScope = {
+  onmessage: ((event: MessageEvent<ShadowWorkerRequest>) => void) | null;
+  postMessage: (message: ShadowWorkerResponse, transfer?: Transferable[]) => void;
+};
 
-let buildings: BuildingFeature[] = [];
+const workerScope = self as unknown as WorkerScope;
+let generation = 0;
+let polygons: PreparedShadowPolygon[] = [];
+let generationValid = true;
 
-self.onmessage = (event: MessageEvent<ShadowRequest>) => {
+workerScope.onmessage = (event) => {
   const request = event.data;
+
   if (request.type === 'set-buildings') {
-    buildings = request.buildings;
+    generation = request.generation;
+    generationValid = false;
+    try {
+      polygons = prepareShadowPolygons(request.buildings);
+      const mesh = buildShadowMesh(polygons);
+      generationValid = true;
+      workerScope.postMessage({
+        type: 'mesh',
+        generation,
+        mesh,
+      }, [mesh.vertices.buffer]);
+    } catch (error) {
+      polygons = [];
+      generationValid = false;
+      const mesh = buildShadowMesh([]);
+      workerScope.postMessage({ type: 'mesh', generation, mesh }, [mesh.vertices.buffer]);
+      workerScope.postMessage({
+        type: 'error',
+        operation: 'mesh',
+        generation,
+        message: error instanceof Error ? error.message : 'Schaduwmesh kon niet worden gemaakt',
+      });
+    }
     return;
   }
 
-  try {
-    self.postMessage({
-      type: 'result',
+  if (request.generation !== generation) return;
+  if (!generationValid) {
+    workerScope.postMessage({
+      type: 'error',
+      operation: 'classify',
       id: request.id,
-      shadows: buildShadows(buildings, request.altitude, request.azimuth),
+      generation,
+      message: 'Gebouwsnapshot is ongeldig',
+    });
+    return;
+  }
+  try {
+    workerScope.postMessage({
+      type: 'statuses',
+      id: request.id,
+      generation,
+      statuses: classifyTerracePoints(
+        request.terraces,
+        polygons,
+        request.altitude,
+        request.azimuth,
+        request.daylight,
+      ),
     });
   } catch (error) {
-    self.postMessage({
+    workerScope.postMessage({
       type: 'error',
+      operation: 'classify',
       id: request.id,
-      message: error instanceof Error ? error.message : 'Schaduwberekening mislukt',
+      generation,
+      message: error instanceof Error ? error.message : 'Terrassen konden niet worden geclassificeerd',
     });
   }
 };
