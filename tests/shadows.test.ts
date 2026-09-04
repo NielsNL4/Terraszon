@@ -33,6 +33,7 @@ describe('shadow projection', () => {
   it('creates polygons usable for point classification', () => {
     const shadows = buildShadows([building], 45, 180);
     expect(shadows.features).toHaveLength(1);
+    expect(shadows.features[0].geometry.coordinates).toHaveLength(6);
     expect(isPointInShadows(
       { type: 'Point', coordinates: [6.000025, 53.00007] },
       shadows,
@@ -41,6 +42,26 @@ describe('shadow projection', () => {
       { type: 'Point', coordinates: [6.001, 53] },
       shadows,
     )).toBe(false);
+  });
+
+  it('keeps building shadows as separate features', () => {
+    const secondBuilding: BuildingFeature = {
+      ...building,
+      properties: { id: 'two', height: 8 },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[
+          [6.001, 53],
+          [6.00105, 53],
+          [6.00105, 53.00002],
+          [6.001, 53.00002],
+          [6.001, 53],
+        ]],
+      },
+    };
+
+    const shadows = buildShadows([building, secondBuilding], 45, 180);
+    expect(shadows.features.map((feature) => feature.properties.buildingId)).toEqual(['one', 'two']);
   });
 
 });

@@ -1,9 +1,4 @@
 import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon, Position } from 'geojson';
-import {
-  union,
-  type Pair,
-  type Polygon as ClippingPolygon,
-} from 'polygon-clipping';
 import type { BuildingFeature } from './types';
 
 const EARTH_METERS_PER_DEGREE = 111_320;
@@ -27,30 +22,28 @@ function projectPolygon(
   polygon: Position[][],
   eastMeters: number,
   northMeters: number,
-): Position[][][] | null {
-  const source = polygon.map((ring) => ring.map((point) => [point[0], point[1]] as Pair));
-  const pieces: ClippingPolygon[] = [source];
+): Position[][][] {
+  const source = polygon.map((ring) => ring.map((point) => [point[0], point[1]]));
+  const translated = source.map((ring) =>
+    ring.map((point) => translatePosition(point, eastMeters, northMeters)),
+  );
+  const pieces: Position[][][] = [source, translated];
 
-  for (const ring of source) {
-    const translated = ring.map((point) => translatePosition(point, eastMeters, northMeters) as Pair);
-    pieces.push([translated]);
-
+  for (let ringIndex = 0; ringIndex < source.length; ringIndex += 1) {
+    const ring = source[ringIndex];
+    const translatedRing = translated[ringIndex];
     for (let index = 0; index < ring.length - 1; index += 1) {
       pieces.push([[
         ring[index],
         ring[index + 1],
-        translated[index + 1],
-        translated[index],
+        translatedRing[index + 1],
+        translatedRing[index],
         ring[index],
       ]]);
     }
   }
 
-  try {
-    return union(pieces[0], ...pieces.slice(1));
-  } catch {
-    return null;
-  }
+  return pieces;
 }
 
 export function shadowVector(
@@ -86,8 +79,7 @@ export function buildShadows(
 
     const projected: Position[][][] = [];
     for (const polygon of polygonsOf(building.geometry)) {
-      const result = projectPolygon(polygon, vector.east, vector.north);
-      if (result) projected.push(...result);
+      projected.push(...projectPolygon(polygon, vector.east, vector.north));
     }
 
     if (projected.length > 0) {

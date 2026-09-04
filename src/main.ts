@@ -2,7 +2,6 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import type { FeatureCollection, MultiPolygon } from 'geojson';
 import { createTerraceMap, type ViewBounds } from './map';
-import { buildShadows } from './shadows';
 import {
   dateAtMinutes,
   formatClock,
@@ -109,6 +108,8 @@ let updateFrame = 0;
 let terraceRequest: AbortController | null = null;
 let noticeTimer = 0;
 let loadingFinished = false;
+let shadowRequestId = 0;
+const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
 
@@ -135,14 +136,19 @@ function showNotice(message: string, persistent = false): void {
   }
 }
 
-function renderSolarState(): void {
+function renderSolarState(calculateShadows = false): void {
   const center = terraceMap.map.getCenter();
   const minutes = Number(timeInput.value);
   const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
-  latestShadows = buildShadows(buildings, sun.altitude, sun.azimuth);
-  terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
-  terraceMap.setShadows(latestShadows);
-  terraceMap.setTerraces(terraces);
+  if (calculateShadows && buildings.length > 0) {
+    shadowRequestId += 1;
+    shadowWorker.postMessage({
+      type: 'calculate',
+      id: shadowRequestId,
+      altitude: sun.altitude,
+      azimuth: sun.azimuth,
+    });
+  }
   terraceMap.setSunLight(sun.altitude, sun.azimuth, sun.isDaylight);
 
   solarTime.textContent = formatMinutes(minutes);
@@ -155,10 +161,37 @@ function renderSolarState(): void {
   sunset.textContent = formatClock(sun.sunset);
 }
 
-function scheduleSolarRender(): void {
+function scheduleSolarRender(calculateShadows = false): void {
   cancelAnimationFrame(updateFrame);
-  updateFrame = requestAnimationFrame(renderSolarState);
+  updateFrame = requestAnimationFrame(() => renderSolarState(calculateShadows));
 }
+
+shadowWorker.onmessage = (event: MessageEvent<{
+  type: 'result';
+  id: number;
+  shadows: FeatureCollection<MultiPolygon>;
+} | {
+  type: 'error';
+  id: number;
+  message: string;
+}>) => {
+  const result = event.data;
+  if (result.type === 'error') {
+    if (result.id === shadowRequestId) showNotice('Schaduwen konden niet worden berekend.');
+    return;
+  }
+  if (result.id !== shadowRequestId) return;
+
+  latestShadows = result.shadows;
+  const center = terraceMap.map.getCenter();
+  const minutes = Number(timeInput.value);
+  const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
+  terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
+  terraceMap.setShadows(latestShadows);
+  terraceMap.setTerraces(terraces);
+};
+
+shadowWorker.onerror = () => showNotice('Schaduwen konden niet worden berekend.');
 
 async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   terraceRequest?.abort();
@@ -174,6 +207,11 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   terraceRequest = new AbortController();
   try {
     terraces = await fetchTerraces(bounds, terraceRequest.signal);
+    const center = terraceMap.map.getCenter();
+    const minutes = Number(timeInput.value);
+    const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
+    terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
+    terraceMap.setTerraces(terraces);
     setLoadingStep(loadTerracesStep, 'done');
     if (terraces.length === 0) showNotice('Geen terrassen met OSM-terraslabel in dit kaartbeeld.');
   } catch (error) {
@@ -187,8 +225,14 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
+    shadowWorker.postMessage({ type: 'set-buildings', buildings });
     setLoadingStep(loadBuildings, 'done');
-    scheduleSolarRender();
+    if (buildings.length === 0) {
+      latestShadows = { type: 'FeatureCollection', features: [] };
+      terraceMap.setShadows(latestShadows);
+    } else {
+      scheduleSolarRender(true);
+    }
     if (capped) showNotice('Veel gebouwen zichtbaar. Zoom verder in voor preciezere schaduwen.');
   },
   onViewChange(bounds, zoom) {
@@ -207,9 +251,10 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
 });
 
 dateInput.addEventListener('change', () => {
-  scheduleSolarRender();
+  scheduleSolarRender(true);
 });
-timeInput.addEventListener('input', scheduleSolarRender);
+timeInput.addEventListener('input', () => scheduleSolarRender());
+timeInput.addEventListener('change', () => scheduleSolarRender(true));
 
 for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
   requiredElement<HTMLInputElement>(`#${layer}`).addEventListener('change', (event) => {
