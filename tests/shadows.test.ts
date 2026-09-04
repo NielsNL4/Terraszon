@@ -43,27 +43,4 @@ describe('shadow projection', () => {
     )).toBe(false);
   });
 
-  it('merges overlapping shadows into one renderable feature', () => {
-    const overlappingBuilding: BuildingFeature = {
-      ...building,
-      properties: { id: 'two', height: 8 },
-      geometry: {
-        type: 'Polygon',
-        coordinates: [[
-          [6.00002, 53],
-          [6.00007, 53],
-          [6.00007, 53.00002],
-          [6.00002, 53.00002],
-          [6.00002, 53],
-        ]],
-      },
-    };
-    const shadows = buildShadows([building, overlappingBuilding], 45, 180);
-
-    expect(shadows.features).toHaveLength(1);
-    expect(isPointInShadows(
-      { type: 'Point', coordinates: [6.00006, 53.00007] },
-      shadows,
-    )).toBe(true);
-  });
 });

@@ -151,8 +151,6 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       paint: {
         'fill-color': '#53606c',
         'fill-opacity': 0.32,
-        // One merged geometry avoids darker overlap zones; disabling edge AA removes hairline seams.
-        'fill-antialias': false,
       },
     }, BUILDING_LAYER);
 

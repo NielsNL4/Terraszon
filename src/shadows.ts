@@ -1,7 +1,6 @@
 import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon, Position } from 'geojson';
 import {
   union,
-  type MultiPolygon as ClippingMultiPolygon,
   type Pair,
   type Polygon as ClippingPolygon,
 } from 'polygon-clipping';
@@ -10,8 +9,6 @@ import type { BuildingFeature } from './types';
 const EARTH_METERS_PER_DEGREE = 111_320;
 const MIN_SUN_ALTITUDE = 0.5;
 const MAX_SHADOW_LENGTH = 500;
-
-type ShadowFeature = Feature<MultiPolygon, { buildingId: string }>;
 
 function translatePosition(position: Position, eastMeters: number, northMeters: number): Position {
   const latitude = position[1];
@@ -56,11 +53,6 @@ function projectPolygon(
   }
 }
 
-function unionShadowGeometries(geometries: ClippingMultiPolygon[]): ClippingMultiPolygon {
-  if (geometries.length === 0) return [];
-  return union(geometries[0], ...geometries.slice(1));
-}
-
 export function shadowVector(
   height: number,
   altitudeDegrees: number,
@@ -86,7 +78,7 @@ export function buildShadows(
   altitudeDegrees: number,
   azimuthDegrees: number,
 ): FeatureCollection<MultiPolygon, { buildingId: string }> {
-  const geometries: ClippingMultiPolygon[] = [];
+  const features: Feature<MultiPolygon, { buildingId: string }>[] = [];
 
   for (const building of buildings) {
     const vector = shadowVector(building.properties.height, altitudeDegrees, azimuthDegrees);
@@ -98,19 +90,16 @@ export function buildShadows(
       if (result) projected.push(...result);
     }
 
-    if (projected.length > 0) geometries.push(projected as ClippingMultiPolygon);
+    if (projected.length > 0) {
+      features.push({
+        type: 'Feature',
+        properties: { buildingId: building.properties.id },
+        geometry: { type: 'MultiPolygon', coordinates: projected },
+      });
+    }
   }
 
-  if (geometries.length === 0) return { type: 'FeatureCollection', features: [] };
-
-  const merged = unionShadowGeometries(geometries);
-  const feature: ShadowFeature = {
-    type: 'Feature',
-    properties: { buildingId: 'merged' },
-    geometry: { type: 'MultiPolygon', coordinates: merged },
-  };
-
-  return { type: 'FeatureCollection', features: [feature] };
+  return { type: 'FeatureCollection', features };
 }
 
 function pointInRing(point: Position, ring: Position[]): boolean {
