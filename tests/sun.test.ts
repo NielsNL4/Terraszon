@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dateAtMinutes, formatMinutes, getSunState, nearestCheckpoint } from '../src/sun';
+import { dateAtMinutes, formatMinutes, getSunState } from '../src/sun';
 
 describe('sun helpers', () => {
   it('builds a local date from the date and slider value', () => {
@@ -22,12 +22,5 @@ describe('sun helpers', () => {
   it('formats slider minutes', () => {
     expect(formatMinutes(5)).toBe('00:05');
     expect(formatMinutes(14 * 60 + 30)).toBe('14:30');
-  });
-
-  it('snaps preview requests to the nearest fifteen-minute checkpoint', () => {
-    expect(nearestCheckpoint(12)).toBe(15);
-    expect(nearestCheckpoint(22)).toBe(15);
-    expect(nearestCheckpoint(38)).toBe(45);
-    expect(nearestCheckpoint(1435)).toBe(1435);
   });
 });

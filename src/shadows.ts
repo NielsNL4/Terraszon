@@ -1,4 +1,4 @@
-import type { FeatureCollection, MultiPolygon, Point, Polygon, Position } from 'geojson';
+import type { Feature, FeatureCollection, MultiPolygon, Point, Polygon, Position } from 'geojson';
 import {
   union,
   type MultiPolygon as ClippingMultiPolygon,
@@ -11,7 +11,7 @@ const EARTH_METERS_PER_DEGREE = 111_320;
 const MIN_SUN_ALTITUDE = 0.5;
 const MAX_SHADOW_LENGTH = 500;
 
-const UNION_BATCH_SIZE = 50;
+type ShadowFeature = Feature<MultiPolygon, { buildingId: string }>;
 
 function translatePosition(position: Position, eastMeters: number, northMeters: number): Position {
   const latitude = position[1];
@@ -56,15 +56,9 @@ function projectPolygon(
   }
 }
 
-function unionShadowBatch(batch: ClippingMultiPolygon[]): ClippingMultiPolygon[] {
-  if (batch.length <= 1) return batch;
-
-  try {
-    return [union(batch[0], ...batch.slice(1))];
-  } catch {
-    // Keep valid individual shadows visible if one batch contains bad geometry.
-    return batch;
-  }
+function unionShadowGeometries(geometries: ClippingMultiPolygon[]): ClippingMultiPolygon {
+  if (geometries.length === 0) return [];
+  return union(geometries[0], ...geometries.slice(1));
 }
 
 export function shadowVector(
@@ -109,25 +103,14 @@ export function buildShadows(
 
   if (geometries.length === 0) return { type: 'FeatureCollection', features: [] };
 
-  // Sort nearby buildings together and never run one unbounded city-wide union.
-  geometries.sort((left, right) => {
-    const leftPoint = left[0]?.[0]?.[0] ?? [0, 0];
-    const rightPoint = right[0]?.[0]?.[0] ?? [0, 0];
-    return leftPoint[1] - rightPoint[1] || leftPoint[0] - rightPoint[0];
-  });
-  const batches: ClippingMultiPolygon[] = [];
-  for (let start = 0; start < geometries.length; start += UNION_BATCH_SIZE) {
-    batches.push(...unionShadowBatch(geometries.slice(start, start + UNION_BATCH_SIZE)));
-  }
-
-  return {
-    type: 'FeatureCollection',
-    features: batches.map((geometry, index) => ({
-      type: 'Feature',
-      properties: { buildingId: `batch-${index}` },
-      geometry: { type: 'MultiPolygon', coordinates: geometry },
-    })),
+  const merged = unionShadowGeometries(geometries);
+  const feature: ShadowFeature = {
+    type: 'Feature',
+    properties: { buildingId: 'merged' },
+    geometry: { type: 'MultiPolygon', coordinates: merged },
   };
+
+  return { type: 'FeatureCollection', features: [feature] };
 }
 
 function pointInRing(point: Position, ring: Position[]): boolean {

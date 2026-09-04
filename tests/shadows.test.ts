@@ -66,20 +66,4 @@ describe('shadow projection', () => {
       shadows,
     )).toBe(true);
   });
-
-  it('returns safely when the global union cannot be completed', () => {
-    const malformed = {
-      ...building,
-      properties: { id: 'broken', height: 8 },
-      geometry: {
-        type: 'Polygon' as const,
-        coordinates: [[
-          [6.00001, 53],
-          [6.00001, 53],
-          [6.00001, 53],
-        ]],
-      },
-    };
-    expect(() => buildShadows([building, malformed], 45, 180)).not.toThrow();
-  });
 });
