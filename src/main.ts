@@ -33,7 +33,7 @@ app.innerHTML = `
         <p>De stad en het zonlicht worden voorbereid...</p>
         <div class="loading-progress"><span></span></div>
         <ul class="loading-steps">
-          <li id="load-map">Kaart laden</li>
+          <li id="load-map" class="active">Kaart laden</li>
           <li id="load-buildings">Gebouwen verzamelen</li>
           <li id="load-sun">Schaduwen berekenen</li>
           <li id="load-terraces">Terrassen ophalen</li>
@@ -216,9 +216,8 @@ shadowWorker.onmessage = (event: MessageEvent<{
     ? result.cached ? 'Gecachte 15-minutenpreview' : 'Snelle schaduwpreview'
     : 'Schaduwen bijgewerkt';
   setLoadingStep(loadSun, 'done');
-  if (!loadingFinished
-    && loadBuildings.classList.contains('done')
-    && loadTerracesStep.classList.contains('done')) finishLoading();
+  // Overpass is optional. Do not keep the complete map behind the loading screen.
+  if (!loadingFinished && loadBuildings.classList.contains('done')) finishLoading();
 };
 
 shadowWorker.onerror = () => {
@@ -275,6 +274,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onMapReady() {
     setLoadingStep(loadMap, 'done');
     setLoadingStep(loadBuildings, 'active');
+    finishLoading();
   },
   onError(message) {
     console.error(message);
