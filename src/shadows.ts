@@ -226,6 +226,9 @@ function pointInBuildingShadows(
   vectorForHeight: (height: number) => { east: number; north: number } | null,
 ): boolean {
   for (const polygon of polygons) {
+    // A restaurant POI often uses the center of its containing building as
+    // its location. That building cannot cast a shadow onto the POI itself.
+    if (pointInPolygon(point, polygon.rings)) continue;
     const vector = vectorForHeight(polygon.height);
     if (!vector) continue;
 

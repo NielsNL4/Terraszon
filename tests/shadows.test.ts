@@ -64,7 +64,7 @@ describe('shadow projection', () => {
     };
     const polygons = prepareShadowPolygons([withCourtyard]);
     expect(isPointInBuildingShadows([6.00005, 53.00005], polygons, 90, 180)).toBe(false);
-    expect(isPointInBuildingShadows([6.00001, 53.00001], polygons, 90, 180)).toBe(true);
+    expect(isPointInBuildingShadows([6.00001, 53.00011], polygons, 45, 180)).toBe(true);
   });
 
   it('returns compact statuses and applies night as an explicit override', () => {
@@ -75,6 +75,14 @@ describe('shadow projection', () => {
     ]);
     expect(classifyTerracePoints(terraces, polygons, 45, 180, false)).toEqual([
       { id: 'one', status: 'night' },
+    ]);
+  });
+
+  it('does not shade a POI located inside its containing building', () => {
+    const polygons = prepareShadowPolygons([building]);
+    const terraces = [{ id: 'inside', coordinates: [6.000025, 53.00001] }];
+    expect(classifyTerracePoints(terraces, polygons, 45, 180, true)).toEqual([
+      { id: 'inside', status: 'sun' },
     ]);
   });
 });
