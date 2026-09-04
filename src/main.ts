@@ -256,7 +256,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
 dateInput.addEventListener('change', () => {
   scheduleSolarRender(true);
 });
-timeInput.addEventListener('input', () => scheduleSolarRender());
+timeInput.addEventListener('input', () => scheduleSolarRender(true));
 timeInput.addEventListener('change', () => scheduleSolarRender(true));
 
 for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
