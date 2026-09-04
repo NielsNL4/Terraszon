@@ -212,9 +212,12 @@ shadowWorker.onmessage = (event: MessageEvent<{
   terraces = classifyTerraces(terraces, latestShadows, sun.isDaylight);
   terraceMap.setShadows(latestShadows);
   terraceMap.setTerraces(terraces);
-  shadowStatus.textContent = result.preview
+  const shadowLabel = result.preview
     ? result.cached ? 'Gecachte 15-minutenpreview' : 'Snelle schaduwpreview'
     : 'Schaduwen bijgewerkt';
+  shadowStatus.textContent = buildings.length > 0
+    ? `${shadowLabel} · ${buildings.length} gebouwen`
+    : 'Geen gebouwen beschikbaar voor schaduwen';
   setLoadingStep(loadSun, 'done');
   // Overpass is optional. Do not keep the complete map behind the loading screen.
   if (!loadingFinished && loadBuildings.classList.contains('done')) finishLoading();
@@ -261,6 +264,11 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
     shadowWorker.postMessage({ type: 'set-buildings', buildings });
+    if (buildings.length === 0) {
+      shadowStatus.textContent = 'Geen gebouwen beschikbaar voor schaduwen';
+      setLoadingStep(loadBuildings, 'active');
+      return;
+    }
     warmCheckpointCache();
     setLoadingStep(loadBuildings, 'done');
     setLoadingStep(loadSun, 'active');

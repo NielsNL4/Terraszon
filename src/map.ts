@@ -11,7 +11,6 @@ import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 import type { BuildingFeature, TerraceFeature } from './types';
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
-const BUILDING_SOURCE = 'openmaptiles';
 const BUILDING_LAYER = 'building-3d';
 const SHADOW_SOURCE = 'terraszon-shadows';
 const SHADOW_LAYER = 'terraszon-shadows';
@@ -113,7 +112,9 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
 
     const seen = new Set<string>();
     const buildings: BuildingFeature[] = [];
-    for (const feature of map.querySourceFeatures(BUILDING_SOURCE, { sourceLayer: 'building' })) {
+    // Query the rendered layer so the snapshot matches the buildings that are
+    // actually available after MapLibre's tile and style processing.
+    for (const feature of map.queryRenderedFeatures({ layers: [BUILDING_LAYER] })) {
       const building = asBuilding(feature);
       if (!building || seen.has(building.properties.id)) continue;
       seen.add(building.properties.id);
@@ -122,7 +123,10 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     }
 
     // Never publish an empty/partial tile snapshot: it would temporarily remove small buildings.
-    if (buildings.length === 0) return;
+    if (buildings.length === 0) {
+      callbacks.onBuildings([], false);
+      return;
+    }
 
     const fingerprint = `${map.getZoom().toFixed(2)}:${[...seen].join('|')}`;
     if (fingerprint === buildingFingerprint) return;
