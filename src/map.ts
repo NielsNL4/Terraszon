@@ -1,5 +1,5 @@
 import * as maplibregl from 'maplibre-gl';
-import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-csp-worker.js?url';
 import type {
   ErrorEvent,
   GeoJSONFeature,
@@ -94,6 +94,9 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     pitch: 52,
     bearing: -18,
     maxPitch: 70,
+    canvasContextAttributes: {
+      powerPreference: 'default',
+    },
     attributionControl: false,
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
