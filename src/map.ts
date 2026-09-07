@@ -197,8 +197,9 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       source: TERRACE_SOURCE,
       paint: {
         'circle-radius': [
-          'case', ['==', ['get', 'evidence'], 'possible'], 3,
-          ['interpolate', ['linear'], ['zoom'], 13, 4, 17, 8],
+          'interpolate', ['linear'], ['zoom'],
+          13, ['case', ['==', ['get', 'evidence'], 'possible'], 2, 4],
+          17, ['case', ['==', ['get', 'evidence'], 'possible'], 3, 8],
         ],
         'circle-color': [
           'case', ['==', ['get', 'evidence'], 'possible'], '#fffdf7',
