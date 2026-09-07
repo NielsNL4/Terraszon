@@ -9,7 +9,7 @@ Terraszon is een statische webapp die laat zien welke horecaterrassen op een gek
 - OpenStreetMap-gebouwen uit de OpenFreeMap-vector tiles.
 - SunCalc voor zonpositie, zonsopkomst en zonsondergang.
 - Earcut voor eenmalige triangulatie van gebouwfootprints in een Web Worker.
-- Overpass API voor horeca met `outdoor_seating=yes`.
+- Overpass API voor horeca en apart gemapte `leisure=outdoor_seating`-locaties.
 
 ## Lokaal ontwikkelen
 
@@ -48,14 +48,14 @@ Na het laden vraagt MapLibre de zichtbare gebouwen uit de gerenderde `building-3
 
 Gebouwgeometrie wordt alleen opnieuw uitgelezen wanneer de kaart beweegt of nieuwe tiles beschikbaar zijn. Tijdens het slepen van de tijdslider veranderen uitsluitend twee kleine shaderwaarden voor richting en lengte; er wordt geen GeoJSON opgebouwd, gekopieerd of opnieuw door MapLibre geïndexeerd. Sliderupdates worden per animation frame samengevoegd. Na loslaten classificeert de worker de terraspunten rechtstreeks tegen de gebouwfootprints, zonder schaduwpolygonen te materialiseren. Alleen resultaten voor de nieuwste gebouwsnapshot en tijdkeuze worden toegepast. Maximaal 1.500 gebouwen worden tegelijkertijd verwerkt, onder zoomniveau 14 worden geen gebouwschaduwen berekend en extreem lange schaduwen zijn begrensd op 500 meter.
 
-Overpass-resultaten worden per afgeronde bounding box 24 uur in `localStorage` bewaard. Requests starten alleen nadat de kaartbeweging eindigt. Hiermee blijft het gebruik van de publieke API beperkt, maar publieke Overpass-instances geven geen beschikbaarheidsgarantie.
+Overpass-resultaten worden per genormaliseerde bounding box 24 uur in `localStorage` bewaard. Requests starten alleen nadat de kaartbeweging eindigt. Bevestigde terrassen, apart gemapte terrasgebieden en mogelijke horeca worden afzonderlijk gemarkeerd. Hiermee blijft het gebruik van de publieke API beperkt, maar publieke Overpass-instances geven geen beschikbaarheidsgarantie.
 
 ## Nauwkeurigheid en beperkingen
 
 - De geselecteerde tijd gebruikt de tijdzone van de browser. Bij een kaartlocatie in een andere tijdzone moet de gebruiker dit verschil zelf meenemen.
 - OpenStreetMap bevat niet voor ieder gebouw een hoogte. Terraszon gebruikt dan een fallback van 9 meter.
 - Een OSM-horecapunt is meestal niet de exacte positie of contour van het terras. De zon/schaduwstatus is daarom indicatief.
-- Alleen locaties met `outdoor_seating=yes` en `amenity=cafe|restaurant` worden opgehaald. Ontbrekende OSM-tags betekenen dat een bestaand terras niet zichtbaar kan zijn. Algemene POI-lagen van de basiskaart zijn verborgen.
+- Horeca wordt breder opgehaald (`restaurant`, `cafe`, `bar`, `pub`, `biergarten`, `fast_food`, `food_court` en `ice_cream`). Locaties zonder terras-tag worden als mogelijke horeca getoond; expliciet `outdoor_seating=no` wordt uitgesloten. Apart gemapte `leisure=outdoor_seating`-locaties worden ook opgehaald. Algemene POI-lagen van de basiskaart zijn verborgen.
 - Bomen, luifels, parasols, hoogteverschillen en tijdelijke objecten worden niet meegenomen.
 - Alleen gebouwen uit het geladen kaartbeeld worden verwerkt; vlak langs de rand kan een schaduw van een nog niet geladen gebouw ontbreken.
 - Bij zon onder de horizon worden locaties als zonder direct daglicht gemarkeerd en wordt geen slagschaduwlaag getekend.

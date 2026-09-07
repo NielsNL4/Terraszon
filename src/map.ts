@@ -196,15 +196,24 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       type: 'circle',
       source: TERRACE_SOURCE,
       paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 4, 17, 8],
-        'circle-color': [
-          'match', ['get', 'status'],
-          'sun', '#f2a900',
-          'shade', '#536b7c',
-          '#7f817d',
+        'circle-radius': [
+          'case', ['==', ['get', 'evidence'], 'possible'], 3,
+          ['interpolate', ['linear'], ['zoom'], 13, 4, 17, 8],
         ],
-        'circle-stroke-color': '#fffdf7',
-        'circle-stroke-width': 2,
+        'circle-color': [
+          'case', ['==', ['get', 'evidence'], 'possible'], '#fffdf7',
+          ['match', ['get', 'status'],
+            'sun', '#f2a900',
+            'shade', '#536b7c',
+            '#7f817d'],
+        ],
+        'circle-stroke-color': [
+          'match', ['get', 'evidence'],
+          'confirmed', '#fffdf7',
+          'mapped', '#fffdf7',
+          '#536b7c',
+        ],
+        'circle-stroke-width': ['match', ['get', 'evidence'], 'possible', 1, 2],
         'circle-opacity': 0.96,
       },
     });
@@ -214,18 +223,72 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     map.on('click', TERRACE_LAYER, (event: MapMouseEvent) => {
       const feature = map.queryRenderedFeatures(event.point, { layers: [TERRACE_LAYER] })[0];
       if (!feature || feature.geometry.type !== 'Point') return;
-      const status = feature.properties.status === 'sun'
+      const properties = feature.properties;
+      const status = properties.status === 'sun'
         ? 'In de zon'
-        : feature.properties.status === 'shade' ? 'In de schaduw' : 'Geen daglicht';
+        : properties.status === 'shade' ? 'In de schaduw' : 'Geen daglicht';
+      const evidence = properties.evidence === 'confirmed'
+        ? 'Terras bevestigd'
+        : properties.evidence === 'mapped' ? 'Terras apart ingetekend' : 'Terras niet bevestigd';
       const popup = document.createElement('div');
       popup.className = 'terrace-popup';
       const title = document.createElement('strong');
-      title.textContent = String(feature.properties.name);
+      title.textContent = String(properties.name);
       const detail = document.createElement('span');
-      detail.textContent = `${status} · indicatieve locatie`;
+      detail.textContent = `${status} · ${evidence}`;
       popup.append(title, detail);
+
+      const details: Array<[string, unknown]> = [
+        ['Type', properties.amenity],
+        ['Keuken', properties.cuisine],
+        ['Adres', properties.address],
+        ['Openingstijden', properties.openingHours],
+        ['Terras', properties.outdoorSeating],
+        ['Capaciteit', properties.capacity],
+        ['Toegankelijkheid', properties.wheelchair],
+        ['Overdekt', properties.covered],
+        ['Seizoen', properties.seasonal],
+      ];
+      for (const [label, rawValue] of details) {
+        if (!rawValue) continue;
+        const row = document.createElement('span');
+        row.textContent = `${label}: ${String(rawValue)}`;
+        popup.append(row);
+      }
+
+      const links = document.createElement('div');
+      links.className = 'terrace-links';
+      const website = String(properties.website ?? '');
+      if (/^https?:\/\//i.test(website)) {
+        const link = document.createElement('a');
+        link.href = website;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Website';
+        links.append(link);
+      }
+      if (properties.phone) {
+        const link = document.createElement('a');
+        link.href = `tel:${String(properties.phone).replace(/[^+\d]/g, '')}`;
+        link.textContent = 'Bellen';
+        links.append(link);
+      }
+      const [longitude, latitude] = feature.geometry.coordinates as [number, number];
+      const route = document.createElement('a');
+      route.href = `https://www.openstreetmap.org/directions?from=&to=${latitude},${longitude}`;
+      route.target = '_blank';
+      route.rel = 'noopener noreferrer';
+      route.textContent = 'Route';
+      links.append(route);
+      const osm = document.createElement('a');
+      osm.href = `https://www.openstreetmap.org/${properties.osmType}/${properties.osmId}`;
+      osm.target = '_blank';
+      osm.rel = 'noopener noreferrer';
+      osm.textContent = 'OpenStreetMap';
+      links.append(osm);
+      popup.append(links);
       new maplibregl.Popup({ offset: 12, closeButton: false })
-        .setLngLat(feature.geometry.coordinates as [number, number])
+        .setLngLat([longitude, latitude])
         .setDOMContent(popup)
         .addTo(map);
     });

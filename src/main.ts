@@ -74,7 +74,7 @@ app.innerHTML = `
           <label><input id="terraces" type="checkbox" checked /><span>Terrassen</span></label>
           <label class="sun-only"><input id="sun-only" type="checkbox" /><span>Alleen zon</span></label>
         </div>
-        <div class="legend"><span class="dot sun"></span>Zon <span class="dot shade"></span>Schaduw</div>
+        <div class="legend"><span class="dot sun"></span>Zon <span class="dot shade"></span>Schaduw <span class="dot possible"></span>Mogelijke horeca</div>
       </div>
     </section>
 

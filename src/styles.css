@@ -238,6 +238,7 @@ input[type="date"] {
 .dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot.sun { background: #f2a900; }
 .dot.shade { background: #536b7c; }
+.dot.possible { background: #fffdf7; border: 1px solid #536b7c; }
 
 .notice {
   position: absolute;
@@ -262,9 +263,17 @@ input[type="date"] {
 .maplibregl-ctrl-top-right { top: 18px; right: 18px; }
 .maplibregl-ctrl-group { overflow: hidden; border-radius: 10px; box-shadow: 0 5px 20px rgb(38 39 34 / 15%) !important; }
 .maplibregl-popup-content { padding: 11px 13px; border-radius: 10px; box-shadow: 0 8px 24px rgb(30 33 29 / 18%); }
-.terrace-popup { display: grid; gap: 3px; }
-.terrace-popup strong { color: #2c302b; font-size: 12px; }
-.terrace-popup span { color: #71756d; font-size: 10px; }
+.terrace-popup {
+  display: grid;
+  gap: 5px;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 48px));
+}
+.terrace-popup strong { color: #2c302b; font-size: 13px; }
+.terrace-popup span { color: #71756d; font-size: 10px; line-height: 1.35; }
+.terrace-popup .terrace-links { display: flex; flex-wrap: wrap; gap: 5px 9px; margin-top: 3px; }
+.terrace-popup a { color: #126b63; font-size: 10px; font-weight: 700; text-decoration: none; }
+.terrace-popup a:hover { text-decoration: underline; }
 
 @media (max-width: 680px) {
   .brand-card { top: 12px; left: 12px; min-width: 0; }

@@ -21,12 +21,26 @@ export type ShadowMesh = {
 };
 
 export type TerraceStatus = 'sun' | 'shade' | 'night';
+export type TerraceEvidence = 'confirmed' | 'possible' | 'mapped';
 
 export type TerraceProperties = {
   id: string;
   name: string;
   amenity: string;
   status: TerraceStatus;
+  evidence: TerraceEvidence;
+  cuisine?: string;
+  openingHours?: string;
+  website?: string;
+  phone?: string;
+  address?: string;
+  wheelchair?: string;
+  capacity?: string;
+  covered?: string;
+  outdoorSeating?: string;
+  seasonal?: string;
+  osmType: 'node' | 'way' | 'relation';
+  osmId: number;
 };
 
 export type TerraceFeature = Feature<Point, TerraceProperties>;

@@ -4,7 +4,15 @@ import type { TerraceFeature } from '../src/types';
 
 const terrace: TerraceFeature = {
   type: 'Feature',
-  properties: { id: 'node/1', name: 'Test', amenity: 'cafe', status: 'night' },
+  properties: {
+    id: 'node/1',
+    name: 'Test',
+    amenity: 'cafe',
+    status: 'night',
+    evidence: 'confirmed',
+    osmType: 'node',
+    osmId: 1,
+  },
   geometry: { type: 'Point', coordinates: [6.5, 53.2] },
 };
 
@@ -19,7 +27,7 @@ describe('terrace data', () => {
     });
     expect(result).toHaveLength(2);
     expect(result[0].properties.name).toBe('Cafe');
-    expect(result[1].properties.name).toBe('Naamloos terras');
+    expect(result[1].properties.name).toBe('Naamloze horecalocatie');
   });
 
   it('keeps the source parser focused on named cafe and restaurant records', () => {
@@ -31,6 +39,46 @@ describe('terrace data', () => {
     });
     expect(result).toHaveLength(2);
     expect(result.map((feature) => feature.properties.amenity)).toEqual(['cafe', 'bar']);
+  });
+
+  it('parses broader horeca and separately mapped outdoor seating with useful details', () => {
+    const result = parseOverpass({
+      elements: [
+        {
+          type: 'way',
+          id: 3,
+          center: { lat: 53.2, lon: 6.5 },
+          tags: {
+            amenity: 'pub',
+            name: 'De Zon',
+            outdoor_seating: 'terrace',
+            cuisine: 'dutch;burger',
+            opening_hours: 'Mo-Su 10:00-22:00',
+            website: 'https://example.test',
+            'addr:street': 'Zonnestraat',
+            'addr:housenumber': '4',
+          },
+        },
+        {
+          type: 'node',
+          id: 4,
+          lat: 53.201,
+          lon: 6.501,
+          tags: { leisure: 'outdoor_seating', capacity: '20', covered: 'yes' },
+        },
+      ],
+    });
+    expect(result[0].properties).toMatchObject({
+      amenity: 'pub',
+      evidence: 'confirmed',
+      cuisine: 'dutch;burger',
+      address: 'Zonnestraat 4',
+    });
+    expect(result[1].properties).toMatchObject({
+      amenity: 'outdoor seating',
+      evidence: 'mapped',
+      capacity: '20',
+    });
   });
 
   it('applies compact worker statuses by terrace id', () => {
