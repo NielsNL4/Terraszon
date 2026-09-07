@@ -336,7 +336,22 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       });
     });
   });
-  map.on('error', (event: ErrorEvent) => callbacks.onError(event.error?.message ?? 'Kaartdata kon niet laden.'));
+  const reportedMapErrors = new Set<string>();
+  const retriedMapSources = new Set<string>();
+  map.on('error', (event: ErrorEvent) => {
+    const details = event as ErrorEvent & { sourceId?: string };
+    const message = details.error?.message ?? 'Kaartdata kon niet laden.';
+    const source = details.sourceId ? ` [bron: ${details.sourceId}]` : '';
+    const diagnostic = `Kaartbron${source}: ${message}`;
+    if (reportedMapErrors.has(diagnostic)) return;
+    reportedMapErrors.add(diagnostic);
+    window.setTimeout(() => reportedMapErrors.delete(diagnostic), 10_000);
+    if (details.sourceId && !retriedMapSources.has(details.sourceId)) {
+      retriedMapSources.add(details.sourceId);
+      window.setTimeout(() => map.refreshTiles(details.sourceId!), 1_500);
+    }
+    callbacks.onError(diagnostic);
+  });
 
   return {
     map,

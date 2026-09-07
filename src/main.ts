@@ -249,7 +249,11 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   },
   onError(message) {
     console.error(message);
-    showNotice('Een deel van de kaartdata kon niet laden.');
+    if (message.startsWith('GPU-schaduwen')) {
+      showNotice('Schaduwen konden niet starten. De kaart blijft beschikbaar.');
+      return;
+    }
+    showNotice('Een deel van de kaarttegels kon niet laden. Probeer opnieuw te bewegen of in te zoomen.');
   },
 });
 
