@@ -25,15 +25,13 @@ workerScope.onmessage = (event) => {
     generation = request.generation;
     generationValid = false;
     try {
-      polygons = prepareShadowPolygons(request.buildings);
-      trees = prepareTreeObstacles(request.trees);
-      const mesh = buildShadowMesh(polygons);
+      if (request.buildings) polygons = prepareShadowPolygons(request.buildings);
+      if (request.trees) trees = prepareTreeObstacles(request.trees);
       generationValid = true;
-      workerScope.postMessage({
-        type: 'mesh',
-        generation,
-        mesh,
-      }, [mesh.vertices.buffer]);
+      if (request.buildings) {
+        const mesh = buildShadowMesh(polygons);
+        workerScope.postMessage({ type: 'mesh', generation, mesh }, [mesh.vertices.buffer]);
+      }
     } catch (error) {
       polygons = [];
       trees = [];

@@ -10,8 +10,8 @@ export type ShadowWorkerRequest =
   | {
     type: 'set-obstacles';
     generation: number;
-    buildings: BuildingFeature[];
-    trees: TreeFeature[];
+    buildings?: BuildingFeature[];
+    trees?: TreeFeature[];
   }
   | {
     type: 'classify';

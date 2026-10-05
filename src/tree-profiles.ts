@@ -123,3 +123,10 @@ export function describeTree(tree: TreeFeature) {
     phenologyShift: (tree.properties.phenologyShift ?? identity.phenologyShift) - (latitude < 0 ? 182 : 0),
   };
 }
+
+export function treeDataKey(trees: TreeFeature[]): string {
+  return trees.map(tree => {
+    const p = tree.properties;
+    return `${p.id}:${tree.geometry.coordinates[0][0]}:${p.height}:${p.crownRadius}:${p.profile ?? p.scientificName ?? p.species}:${p.leafCycle}:${p.rotation}:${p.phenologyShift}`;
+  }).join('|');
+}

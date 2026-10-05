@@ -3,7 +3,7 @@ import { buildingContains, mergeBuildingGeometry, parseBuildings, withTileHeight
 import { buildingAreas, createBuildingLoader, MAX_FETCHED_BUILDINGS } from '../src/building-loader';
 import { prepareShadowPolygons, shadowVector } from '../src/shadows';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 let fetchBuildings = createBuildingLoader();
 beforeEach(() => { fetchBuildings = createBuildingLoader(); });
 
@@ -197,5 +197,17 @@ describe('gebouwdata laden', () => {
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(progress).not.toHaveBeenCalled();
     expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('blijft niet laden als de browser afbreken van een fetch negeert', async () => {
+    vi.useFakeTimers();
+    setup([]);
+    vi.stubGlobal('fetch', () => new Promise(() => {}));
+    const load = createBuildingLoader({ deadline: 100 });
+    const progress = vi.fn();
+    const result = expect(load(bounds, new AbortController().signal, progress)).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.advanceTimersByTimeAsync(101);
+    await result;
+    expect(progress).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { buildingBox, parseBuildings } from './building-types';
 import { OVERPASS_ENDPOINTS } from './terraces';
 import type { CategorizedBuilding } from './types';
+import { abortable, aborted, requestJSON } from './requests';
 
 type Bounds = { south: number; west: number; north: number; east: number };
 export type BuildingData = {
@@ -14,14 +15,17 @@ export const MAX_FETCHED_BUILDINGS = 20_000; // minimum per-request limit, not a
 const MAX_VIEW_BUILDINGS = 60_000;
 const MAX_AREAS = 24;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
-type CachedArea = { savedAt: number; buildings: CategorizedBuilding[] };
+export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[] };
+type AreaStore = { get: (key: string) => Promise<CachedArea | null>; set: (key: string, value: CachedArea) => Promise<void> };
+type LoaderOptions = { mobile?: boolean; store?: AreaStore; deadline?: number };
 
-export function buildingAreas(bounds: Bounds): Bounds[] {
+export function buildingAreas(bounds: Bounds, mobile = false): Bounds[] {
   const areas: Bounds[] = [];
-  const south = Math.floor(bounds.south * 100), north = Math.ceil(bounds.north * 100);
-  const west = Math.floor(bounds.west * 50), east = Math.ceil(bounds.east * 50);
+  const latitudeScale = mobile ? 200 : 100, longitudeScale = mobile ? 100 : 50;
+  const south = Math.floor(bounds.south * latitudeScale), north = Math.ceil(bounds.north * latitudeScale);
+  const west = Math.floor(bounds.west * longitudeScale), east = Math.ceil(bounds.east * longitudeScale);
   for (let y = south; y < north; y++) for (let x = west; x < east; x++) {
-    areas.push({ south: y / 100, north: (y + 1) / 100, west: x / 50, east: (x + 1) / 50 });
+    areas.push({ south: y / latitudeScale, north: (y + 1) / latitudeScale, west: x / longitudeScale, east: (x + 1) / longitudeScale });
   }
   const latitude = (bounds.south + bounds.north) / 2;
   const longitude = (bounds.west + bounds.east) / 2;
@@ -31,7 +35,13 @@ export function buildingAreas(bounds: Bounds): Bounds[] {
   return areas.sort((a, b) => distance(a) - distance(b));
 }
 
-export function createBuildingLoader() {
+export function createBuildingLoader(options: LoaderOptions = {}) {
+  const store: AreaStore = options.store ?? {
+    async get(key) { try { return JSON.parse(localStorage.getItem(key) ?? 'null'); } catch { return null; } },
+    async set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Memory remains available. */ } },
+  };
+  const latitudeScale = options.mobile ? 200 : 100, longitudeScale = options.mobile ? 100 : 50;
+  const batchSize = options.mobile ? 2 : 4;
   const memory = new Map<string, CachedArea>();
   const keyFor = (area: Bounds) => `terraszon:v3:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(4)).join(':')}`;
   const remember = (key: string, cached: CachedArea) => {
@@ -44,13 +54,13 @@ export function createBuildingLoader() {
       memory.delete(first);
     }
   };
-  const cachedArea = (area: Bounds): CategorizedBuilding[] | null => {
+  const cachedArea = async (area: Bounds): Promise<CategorizedBuilding[] | null> => {
     const key = keyFor(area);
     let cached = memory.get(key);
     if (!cached) {
-      try { cached = JSON.parse(localStorage.getItem(key) ?? 'null') ?? undefined; } catch { /* Optional storage. */ }
+      cached = await store.get(key) ?? undefined;
     }
-    if (!cached || Date.now() - cached.savedAt >= CACHE_TTL || !Array.isArray(cached.buildings)
+    if (!cached || !Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt >= CACHE_TTL || !Array.isArray(cached.buildings)
       || cached.buildings.length > MAX_VIEW_BUILDINGS) return null;
     remember(key, cached);
     return cached.buildings;
@@ -61,27 +71,21 @@ export function createBuildingLoader() {
     // small queries would exhaust the public instances' per-client quota.
     const envelope = { south: Math.min(...areas.map(a => a.south)), north: Math.max(...areas.map(a => a.north)),
       west: Math.min(...areas.map(a => a.west)), east: Math.max(...areas.map(a => a.east)) };
-    const rectangle = Math.round((envelope.north - envelope.south) * 100)
-      * Math.round((envelope.east - envelope.west) * 50) === areas.length;
+    const rectangle = Math.round((envelope.north - envelope.south) * latitudeScale)
+      * Math.round((envelope.east - envelope.west) * longitudeScale) === areas.length;
     const selectors = (rectangle ? [envelope] : areas).map((area) => {
       const bbox = [area.south, area.west, area.north, area.east].map(v => v.toFixed(4)).join(',');
       return `way["building"](${bbox});relation["building"]["type"="multipolygon"](${bbox});way["building:part"](${bbox});relation["building:part"]["type"="multipolygon"](${bbox});`;
     }).join('');
-    const limit = Math.max(MAX_FETCHED_BUILDINGS, 8_000 * areas.length);
+    const limit = options.mobile ? Math.max(4_000, 3_000 * areas.length) : Math.max(MAX_FETCHED_BUILDINGS, 8_000 * areas.length);
     const query = `[out:json][timeout:15][maxsize:67108864];(${selectors});out geom ${limit + 1};`;
     let lastError: unknown;
     for (const endpoint of OVERPASS_ENDPOINTS) {
       if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-      const controller = new AbortController();
-      const abort = () => controller.abort();
-      signal.addEventListener('abort', abort, { once: true });
-      const timeout = window.setTimeout(abort, 18_000);
       try {
         const url = new URL(endpoint);
         url.searchParams.set('data', query);
-        const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) throw new Error(`${endpoint} gaf status ${response.status}`);
-        const payload = await response.json() as Parameters<typeof parseBuildings>[0] & { remark?: string };
+        const payload = await requestJSON<Parameters<typeof parseBuildings>[0] & { remark?: string }>(url, signal, 18_000);
         if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
         if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
         if (payload.elements.length > limit) return { buildings: [], capped: true };
@@ -96,16 +100,13 @@ export function createBuildingLoader() {
             if (!subset.length) continue;
             const key = keyFor(area), cached = { savedAt: Date.now(), buildings: subset };
             remember(key, cached);
-            try { localStorage.setItem(key, JSON.stringify(cached)); } catch { /* Memory cache still works when browser storage is full. */ }
+            void store.set(key, cached).catch(() => {});
           }
         }
         return { buildings, capped: false };
       } catch (error) {
         if (signal.aborted) throw error;
         lastError = error;
-      } finally {
-        window.clearTimeout(timeout);
-        signal.removeEventListener('abort', abort);
       }
     }
     throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
@@ -113,7 +114,7 @@ export function createBuildingLoader() {
 
   return async (bounds: Bounds, signal: AbortSignal, onProgress?: (data: BuildingData) => void): Promise<BuildingData> => {
     if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-    const allAreas = buildingAreas(bounds), areas = allAreas.slice(0, MAX_AREAS);
+    const allAreas = buildingAreas(bounds, options.mobile), areas = allAreas.slice(0, MAX_AREAS);
     const buildings = new Map<string, CategorizedBuilding>();
     let capped = areas.length < allAreas.length, failedAreas = 0, loadedAreas = 0;
     let lastError: unknown;
@@ -124,44 +125,52 @@ export function createBuildingLoader() {
         buildings.set(building.properties.id, building);
       }
     };
-    const pending: Bounds[] = [];
-    for (const area of areas) {
-      const cached = cachedArea(area);
-      if (cached) { merge(cached); loadedAreas++; } else pending.push(area);
-    }
-    if (loadedAreas) onProgress?.(snapshot());
     const controller = new AbortController();
-    const abort = () => controller.abort();
+    const abort = () => controller.abort(aborted(signal));
     signal.addEventListener('abort', abort, { once: true });
     // Bound total waiting time even if every public instance is overloaded.
-    const deadline = window.setTimeout(abort, 45_000);
-    const rows = new Map<number, Bounds[]>();
-    for (const area of pending) {
-      if (!rows.has(area.south)) rows.set(area.south, []);
-      rows.get(area.south)!.push(area);
-    }
-    const batches = [...rows.values()].flatMap(row => Array.from({ length: Math.ceil(row.length / 4) },
-      (_, index) => row.slice(index * 4, index * 4 + 4)));
-    let next = 0;
+    const deadline = setTimeout(() => controller.abort(new DOMException('Gebouwdata reageerde niet op tijd', 'TimeoutError')), options.deadline ?? 45_000);
+    let finished = false;
+    const pending: Bounds[] = [];
     try {
-      await Promise.all(Array.from({ length: Math.min(2, batches.length) }, async () => {
+      const cached = await abortable(Promise.all(areas.map(cachedArea)), controller.signal);
+      for (let index = 0; index < areas.length; index++) {
+        if (cached[index]) { merge(cached[index]!); loadedAreas++; } else pending.push(areas[index]);
+      }
+      if (loadedAreas) onProgress?.(snapshot());
+      const rows = new Map<number, Bounds[]>();
+      for (const area of pending) {
+        if (!rows.has(area.south)) rows.set(area.south, []);
+        rows.get(area.south)!.push(area);
+      }
+      const batches = [...rows.values()].flatMap(row => Array.from({ length: Math.ceil(row.length / batchSize) },
+        (_, index) => row.slice(index * batchSize, index * batchSize + batchSize)));
+      let next = 0;
+      try { await abortable(Promise.all(Array.from({ length: Math.min(options.mobile ? 1 : 2, batches.length) }, async () => {
         while (next < batches.length && !controller.signal.aborted) {
           const batch = batches[next++];
           try {
             const result = await loadArea(batch, controller.signal);
+            if (finished || controller.signal.aborted) return;
             capped ||= result.capped;
             merge(result.buildings);
-          } catch (error) { failedAreas += batch.length; lastError = error; }
+          } catch (error) {
+            if (finished || controller.signal.aborted) return;
+            failedAreas += batch.length; lastError = error;
+          }
           loadedAreas += batch.length;
           if (!signal.aborted) onProgress?.(snapshot());
         }
-      }));
+      })), controller.signal); } catch (error) { lastError = error; }
+      finished = true;
       if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
       failedAreas += areas.length - loadedAreas;
       if (!buildings.size && failedAreas) throw lastError instanceof Error ? lastError : new Error('Gebouwdata niet beschikbaar');
       return snapshot();
     } finally {
-      window.clearTimeout(deadline);
+      finished = true;
+      controller.abort();
+      clearTimeout(deadline);
       signal.removeEventListener('abort', abort);
     }
   };

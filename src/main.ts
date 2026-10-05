@@ -1,7 +1,7 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { createTerraceMap, type ViewBounds } from './map';
-import { fetchBuildings, type BuildingData } from './building-loader';
+import { buildingViewKey, type BuildingSummary } from './building-protocol';
 import { PALETTE_STORAGE_KEY } from './building-palette';
 import { searchPlaces, type SearchResult } from './search';
 import { createLocationTracker } from './location';
@@ -14,7 +14,7 @@ import {
   timelineEventPosition,
 } from './sun';
 import { applyTerraceStatuses, fetchTerraces } from './terraces';
-import { fetchTrees } from './trees';
+import { bufferedTreeBounds, createTreeViewLoader, treeDataKey } from './tree-loader';
 import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -191,7 +191,15 @@ let updateFrame = 0;
 let classifyOnNextFrame = false;
 let terraceRequest: AbortController | null = null;
 let treeRequest: AbortController | null = null;
+const fetchVisibleTrees = createTreeViewLoader();
+let appliedTrees = '';
+let sentTreeState = '';
+let treeLoadBounds: ViewBounds | null = null;
 let buildingTypeRequest: AbortController | null = null;
+let buildingLoadKey = '';
+let loadedBuildingKey = '';
+let loadedBuildingAt = 0;
+let loadedBuildingSummary: BuildingSummary | null = null;
 let noticeTimer = 0;
 let loadingFinished = false;
 let shadowRequestId = 0;
@@ -307,77 +315,97 @@ shadowWorker.onmessage = (event: MessageEvent<ShadowWorkerResponse>) => {
 
 shadowWorker.onerror = () => showNotice('Schaduwen konden niet worden berekend.');
 
-function updateObstacles(): void {
+function updateObstacles(buildingsChanged = true, treesChanged = true): void {
   obstacleGeneration += 1;
+  const treeEnabled = treesEnabled && terraceMap.map.getZoom() >= 14;
+  const state = `${treeEnabled}:${appliedTrees}`;
+  const sendTrees = treesChanged || state !== sentTreeState;
+  sentTreeState = state;
   const request: ShadowWorkerRequest = {
-    type: 'set-obstacles', generation: obstacleGeneration, buildings,
-    trees: treesEnabled ? trees : [],
+    type: 'set-obstacles', generation: obstacleGeneration,
+    ...(buildingsChanged ? { buildings } : {}),
+    ...(sendTrees ? { trees: treeEnabled ? trees : [] } : {}),
   };
   shadowWorker.postMessage(request);
   scheduleSolarRender(true);
 }
 
 async function loadTrees(bounds: ViewBounds, zoom: number): Promise<void> {
+  if (treesEnabled && zoom >= 14 && treeRequest && !treeRequest.signal.aborted && treeLoadBounds
+    && treeLoadBounds.south <= bounds.south && treeLoadBounds.north >= bounds.north
+    && treeLoadBounds.west <= bounds.west && treeLoadBounds.east >= bounds.east) return;
   treeRequest?.abort();
-  if (trees.length) {
-    trees = [];
-    terraceMap.setTrees([]);
-    updateObstacles();
-  }
   if (!treesEnabled || zoom < 14) {
     treeStatus.textContent = treesEnabled ? 'Zoom verder in om bomen te zien.' : 'Bomen uitgeschakeld.';
     return;
   }
-  treeStatus.textContent = 'Bomen laden…';
+  treeStatus.textContent = trees.length ? `${trees.length} bomen zichtbaar · nieuwe gebieden laden…` : 'Bomen laden…';
   const request = new AbortController();
   treeRequest = request;
+  treeLoadBounds = bufferedTreeBounds(bounds);
   try {
-    const nextTrees = await fetchTrees(bounds, request.signal);
+    const nextTrees = await fetchVisibleTrees(bounds, request.signal);
     if (request.signal.aborted || !treesEnabled) return;
-    trees = nextTrees;
-    terraceMap.setTrees(trees);
-    updateObstacles();
+    const key = treeDataKey(nextTrees);
+    if (key !== appliedTrees) {
+      trees = nextTrees;
+      appliedTrees = key;
+      terraceMap.setTrees(trees);
+      updateObstacles(false, true);
+    }
     treeStatus.textContent = trees.length
       ? `${trees.length} bomen${trees.length === 1_000 ? ' (maximum)' : ''} · boomvorm en bladstand zijn geschat.`
       : 'Geen ingetekende bomen in dit kaartbeeld.';
   } catch (error) {
     if (request.signal.aborted) return;
-    treeStatus.textContent = 'Bomen konden niet laden. Verplaats de kaart om opnieuw te proberen.';
+    treeStatus.textContent = trees.length ? 'Nieuwe bomen konden niet laden. Bestaande bomen blijven zichtbaar.' : 'Bomen konden niet laden. Verplaats de kaart om opnieuw te proberen.';
     console.error('Bomen laden mislukt', error);
+  } finally {
+    if (treeRequest === request) { treeRequest = null; treeLoadBounds = null; }
   }
 }
 
 async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise<void> {
-  buildingTypeRequest?.abort();
   if (zoom < 14) {
+    buildingTypeRequest?.abort();
     terraceMap.setBuildings(null);
     buildingStatus.textContent = 'Zoom in voor gebouwkleuren per type.';
     retryBuildings.hidden = true;
     return;
   }
+  const key = buildingViewKey(bounds, mobileLayout.matches);
+  if (buildingTypeRequest && !buildingTypeRequest.signal.aborted && buildingLoadKey === key) return;
+  if (loadedBuildingKey === key && loadedBuildingSummary && Date.now() - loadedBuildingAt < 24 * 60 * 60 * 1000) {
+    buildingStatus.textContent = `${loadedBuildingSummary.totalBuildings} gebouwen · ${loadedBuildingSummary.typedBuildings} met een specifiek type · geladen.`;
+    retryBuildings.hidden = true;
+    return;
+  }
+  buildingTypeRequest?.abort();
+  buildingLoadKey = key;
   buildingStatus.textContent = 'Gebouwtypes laden…';
   retryBuildings.hidden = true;
   const request = new AbortController();
   buildingTypeRequest = request;
-  const apply = (data: BuildingData, loading: boolean) => {
+  const apply = (data: BuildingSummary, loading: boolean) => {
     if (request.signal.aborted) return;
-    if (data.buildings.length) terraceMap.setBuildings(data.buildings);
-    const typed = data.buildings.filter((building) => !['yes', 'unknown', 'undefined', 'unclassified', 'unidentified', 'other', 'true', 'maybe', 'fixme', 'Y'].includes(building.properties.buildingType)).length;
-    const detail = `${data.buildings.length} gebouwen · ${typed} met een specifiek type`;
+    const detail = `${data.totalBuildings} gebouwen · ${data.typedBuildings} met een specifiek type`;
     buildingStatus.textContent = loading
       ? `${detail} · laden ${data.loadedAreas}/${data.totalAreas} gebieden…`
       : `${detail}${data.failedAreas ? ' · deels geladen; overige gebouwen zijn neutraal.' : data.capped ? ' · zoom verder in voor de overige gebieden.' : ' · geladen.'}`;
     retryBuildings.hidden = loading || data.failedAreas === 0;
   };
   try {
-    const result = await fetchBuildings(bounds, request.signal, (data) => apply(data, true));
+    const result = await terraceMap.loadBuildings(bounds, mobileLayout.matches, request.signal, (data) => apply(data, true));
     if (request.signal.aborted) return;
     apply(result, false);
+    if (!result.failedAreas && !result.capped) { loadedBuildingKey = key; loadedBuildingAt = Date.now(); loadedBuildingSummary = result; }
   } catch (error) {
     if (request.signal.aborted) return;
     buildingStatus.textContent = 'Nieuwe gebouwtypes konden niet laden. Bestaande kleuren blijven behouden.';
     retryBuildings.hidden = false;
     console.error('Gebouwtypes laden mislukt', error);
+  } finally {
+    if (buildingTypeRequest === request) buildingTypeRequest = null;
   }
 }
 
@@ -410,7 +438,7 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
-    updateObstacles();
+    updateObstacles(true, terraceMap.map.getZoom() < 14);
     setLoadingStep(loadBuildings, 'done');
     if (capped) showNotice('Veel gebouwen zichtbaar. Zoom verder in voor preciezere schaduwen.');
   },
@@ -424,6 +452,12 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     setLoadingStep(loadMap, 'done');
     setLoadingStep(loadBuildings, 'active');
     finishLoading();
+  },
+  onBuildingError(message) {
+    loadedBuildingKey = '';
+    buildingStatus.textContent = 'Gebouwtypes gevonden, maar de weergave kon niet worden bijgewerkt. Probeer opnieuw.';
+    retryBuildings.hidden = false;
+    console.error('Gebouwweergave mislukt', message);
   },
   onError(message) {
     console.error(message);
@@ -440,6 +474,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
 });
 
 retryBuildings.addEventListener('click', () => {
+  loadedBuildingKey = '';
   const bounds = terraceMap.map.getBounds();
   void loadBuildingCategories({ south: bounds.getSouth(), west: bounds.getWest(), north: bounds.getNorth(), east: bounds.getEast() }, terraceMap.map.getZoom());
 });
@@ -635,6 +670,7 @@ for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
 requiredElement<HTMLInputElement>('#trees').addEventListener('change', (event) => {
   treesEnabled = (event.currentTarget as HTMLInputElement).checked;
   terraceMap.setVisibility('trees', treesEnabled);
+  updateObstacles(false, true);
   const bounds = terraceMap.map.getBounds();
   void loadTrees({
     south: bounds.getSouth(), west: bounds.getWest(),

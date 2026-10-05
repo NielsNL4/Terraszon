@@ -159,6 +159,12 @@ export function withTileHeights(
   buildings: CategorizedBuilding[],
   tiles: Array<{ geometry: CategorizedBuilding['geometry']; properties: Record<string, unknown> | null }>,
 ): CategorizedBuilding[] {
+  return createTileHeightResolver(tiles)(buildings);
+}
+
+export function createTileHeightResolver(
+  tiles: Array<{ geometry: CategorizedBuilding['geometry']; properties: Record<string, unknown> | null }>,
+) {
   // Tiles merge thousands of footprints under one ID. Match by position only,
   // never by ID, and index individual polygons to keep the join inexpensive.
   const cells = new Map<string, Array<{ rings: Position[][]; height: number }>>();
@@ -169,11 +175,15 @@ export function withTileHeights(
     const polygons = tile.geometry.type === 'Polygon' ? [tile.geometry.coordinates] : tile.geometry.coordinates;
     for (const rings of polygons) {
       if (!rings[0]?.length) continue;
-      const xs = rings[0].map((point) => cell(point[0]));
-      const ys = rings[0].map((point) => cell(point[1]));
+      let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
+      for (const point of rings[0]) {
+        const x = cell(point[0]), y = cell(point[1]);
+        west = Math.min(west, x); east = Math.max(east, x);
+        south = Math.min(south, y); north = Math.max(north, y);
+      }
       const entry = { rings, height };
-      for (let x = Math.min(...xs); x <= Math.max(...xs); x++) {
-        for (let y = Math.min(...ys); y <= Math.max(...ys); y++) {
+      for (let x = west; x <= east; x++) {
+        for (let y = south; y <= north; y++) {
           const key = `${x}:${y}`;
           if (!cells.has(key)) cells.set(key, []);
           cells.get(key)!.push(entry);
@@ -181,7 +191,7 @@ export function withTileHeights(
       }
     }
   }
-  return buildings.map((building) => {
+  return (buildings: CategorizedBuilding[]) => buildings.map((building) => {
     if (building.properties.hasHeight) return building;
     const point = buildingSample(building);
     const candidates = cells.get(`${cell(point[0])}:${cell(point[1])}`) ?? [];

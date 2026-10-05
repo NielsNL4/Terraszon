@@ -2,6 +2,7 @@ import type { FeatureCollection, Point } from 'geojson';
 import type { TreeFeature } from './types';
 import { OVERPASS_ENDPOINTS } from './terraces';
 import { stableTreeFraction, TREE_PROFILES, treeIdentity } from './tree-profiles';
+import { requestJSON } from './requests';
 
 const MAX_TREES = 1_000;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
@@ -140,20 +141,9 @@ async function fetchMunicipalTrees(bounds: Bounds, signal: AbortSignal): Promise
   url.searchParams.set('outSR', '4326');
   url.searchParams.set('outFields', 'OBJECTID,BOOMHOOGTE,BOOMSOORT,LATIJNSE_NAAM');
   url.searchParams.set('resultRecordCount', String(MAX_TREES));
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 8_000);
-  const abort = () => controller.abort();
-  signal.addEventListener('abort', abort, { once: true });
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`Bomenkaart Groningen gaf status ${response.status}`);
-    const payload = await response.json() as { features?: MunicipalTree[] };
-    if (!Array.isArray(payload.features)) throw new Error('Ongeldig resultaat van bomenkaart Groningen');
-    return parseMunicipalTrees({ features: payload.features });
-  } finally {
-    window.clearTimeout(timeout);
-    signal.removeEventListener('abort', abort);
-  }
+  const payload = await requestJSON<{ features?: MunicipalTree[] }>(url, signal, 8_000);
+  if (!Array.isArray(payload.features)) throw new Error('Ongeldig resultaat van bomenkaart Groningen');
+  return parseMunicipalTrees({ features: payload.features });
 }
 
 export async function fetchTrees(bounds: Bounds, signal: AbortSignal): Promise<TreeFeature[]> {
@@ -186,16 +176,9 @@ export async function fetchTrees(bounds: Bounds, signal: AbortSignal): Promise<T
   let lastError: unknown;
   for (const endpoint of OVERPASS_ENDPOINTS) {
     if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8_000);
-    const abort = () => controller.abort();
-    signal.addEventListener('abort', abort, { once: true });
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST', body: new URLSearchParams({ data: query }), signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`${endpoint} gaf status ${response.status}`);
-      const payload = await response.json() as { elements: TreeElement[]; remark?: string };
+      const payload = await requestJSON<{ elements: TreeElement[]; remark?: string }>(endpoint, signal, 8_000,
+        { method: 'POST', body: new URLSearchParams({ data: query }) });
       if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
       const trees = parseTrees(payload);
       if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
@@ -206,9 +189,6 @@ export async function fetchTrees(bounds: Bounds, signal: AbortSignal): Promise<T
     } catch (error) {
       if (signal.aborted) throw error;
       lastError = error;
-    } finally {
-      window.clearTimeout(timeout);
-      signal.removeEventListener('abort', abort);
     }
   }
   throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');

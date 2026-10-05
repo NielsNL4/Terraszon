@@ -2,7 +2,7 @@ import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap 
 import { createProgram, isWebGL2, matrixAtOrigin, requiredAttribute, requiredUniform } from './shadow-layer';
 import { MAX_SHADOW_LENGTH, MIN_SUN_ALTITUDE } from './shadows';
 import { TREE_INSTANCE_STRIDE, TREE_VERTEX_STRIDE, treeInstances, treeMercator, treeMesh, type TreeInstances } from './tree-model';
-import { LEAF_AMOUNT_GLSL, TREE_PROFILES, treeSeasonDay, type TreeProfileId } from './tree-profiles';
+import { LEAF_AMOUNT_GLSL, TREE_PROFILES, treeSeasonDay, treeDataKey, type TreeProfileId } from './tree-profiles';
 import type { TreeFeature } from './types';
 
 type GL = WebGLRenderingContext | WebGL2RenderingContext;
@@ -102,6 +102,7 @@ export class InstancedTreeLayer implements CustomLayerInterface {
   private batches = new Map<TreeProfileId, Batch>();
   private data: TreeInstances = { origin: [0, 0], groups: new Map() };
   private pending = true;
+  private treeKey: string | null = null;
   private rebuild = false;
   private failed = false;
   private visible = true;
@@ -117,6 +118,9 @@ export class InstancedTreeLayer implements CustomLayerInterface {
   constructor(private readonly onError: (message: string) => void) {}
 
   setTrees(trees: TreeFeature[]): void {
+    const key = treeDataKey(trees);
+    if (key === this.treeKey) return;
+    this.treeKey = key;
     this.data = treeInstances(trees);
     this.pending = true;
     this.map?.triggerRepaint();
