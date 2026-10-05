@@ -1,7 +1,8 @@
-import * as maplibregl from 'maplibre-gl';
+import maplibregl from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-csp-worker.js?url';
 import type {
   ErrorEvent,
+  ExpressionSpecification,
   GeoJSONFeature,
   GeoJSONSource,
   MapMouseEvent,
@@ -9,13 +10,24 @@ import type {
 } from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 import { BuildingShadowLayer } from './shadow-layer';
-import type { BuildingFeature, ShadowMesh, TerraceFeature } from './types';
+import { withTileHeights } from './building-types';
+import { loadPalette, UNKNOWN_BUILDING_COLOR } from './building-palette';
+import { treeMarkers } from './trees';
+import { InstancedTreeLayer } from './tree-layer';
+import type { BuildingFeature, CategorizedBuilding, ShadowMesh, TerraceFeature, TreeFeature } from './types';
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 const BUILDING_LAYER = 'building-3d';
+const COLORED_BUILDING_SOURCE = 'terraszon-buildings';
+const COLORED_BUILDING_LAYER = 'terraszon-building-3d';
 const SHADOW_LAYER = 'terraszon-shadows';
 const TERRACE_SOURCE = 'terraszon-terraces';
 const TERRACE_LAYER = 'terraszon-terraces';
+const TREE_SOURCE = 'terraszon-trees';
+const TREE_MARKER_SOURCE = 'terraszon-tree-points';
+const TREE_LAYER = 'terraszon-trees';
+const TREE_MARKERS = 'terraszon-tree-markers';
+const SUNNY_FILTER: ExpressionSpecification = ['in', ['get', 'status'], ['literal', ['sun', 'filtered']]];
 const DEFAULT_POI_LAYERS = [
   'poi_r20',
   'poi_r7',
@@ -28,6 +40,9 @@ const MAX_BUILDINGS = 1_500;
 const emptyTerraces: FeatureCollection<TerraceFeature['geometry'], TerraceFeature['properties']> = {
   type: 'FeatureCollection',
   features: [],
+};
+const emptyTrees: FeatureCollection<TreeFeature['geometry'], TreeFeature['properties']> = {
+  type: 'FeatureCollection', features: [],
 };
 
 export type ViewBounds = { south: number; west: number; north: number; east: number };
@@ -43,13 +58,17 @@ export type TerraceMap = {
   map: MapLibreMap;
   setShadowMesh: (mesh: ShadowMesh) => void;
   setTerraces: (terraces: TerraceFeature[]) => void;
+  setTrees: (trees: TreeFeature[]) => void;
+  setTreeDate: (date: string) => void;
+  setBuildings: (buildings: CategorizedBuilding[] | null) => void;
+  refreshBuildingPalette: () => void;
   setOnlySunny: (enabled: boolean) => void;
-  setVisibility: (layer: 'buildings' | 'shadows' | 'terraces', visible: boolean) => void;
+  setVisibility: (layer: 'buildings' | 'shadows' | 'terraces' | 'trees', visible: boolean) => void;
   setSunLight: (altitude: number, azimuth: number, daylight: boolean) => void;
 };
 
 function buildingHeight(properties: Record<string, unknown> | null): number {
-  const rendered = Number(properties?.render_height);
+  const rendered = Number(properties?.height ?? properties?.render_height);
   return Number.isFinite(rendered) && rendered > 0 ? rendered : 9;
 }
 
@@ -58,7 +77,7 @@ function asBuilding(feature: GeoJSONFeature): BuildingFeature | null {
   const firstPosition = feature.geometry.type === 'Polygon'
     ? feature.geometry.coordinates[0]?.[0]
     : feature.geometry.coordinates[0]?.[0]?.[0];
-  const id = String(feature.id ?? `${firstPosition?.[0]}:${firstPosition?.[1]}`);
+  const id = String(feature.properties?.id ?? feature.id ?? `${firstPosition?.[0]}:${firstPosition?.[1]}`);
 
   return {
     type: 'Feature',
@@ -123,19 +142,79 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   let shadowLayer: BuildingShadowLayer | null = null;
   let shadowMesh: ShadowMesh = { origin: [0, 0], vertices: new Float32Array() };
   let terraceData: TerraceFeature[] = [];
+  let treeData: TreeFeature[] = [];
+  let treeLayer: InstancedTreeLayer | null = null;
+  let treeDate = '';
+  let buildingData: CategorizedBuilding[] | null = null;
   let onlySunny = false;
   let sunState = { altitude: 0, azimuth: 0, daylight: false };
-  const visibility = { buildings: true, shadows: true, terraces: true };
+  const visibility = { buildings: true, shadows: true, terraces: true, trees: true };
+  let palette = loadPalette();
+
+  const colorBuildings = () => {
+    if (!ready || !map.getLayer(COLORED_BUILDING_LAYER)) return;
+    const color: ExpressionSpecification = ['coalesce',
+      ['get', ['get', 'buildingType'], ['literal', palette.colors]], palette.colors.yes];
+    map.setPaintProperty(COLORED_BUILDING_LAYER, 'fill-extrusion-color', color);
+  };
+
+  const updateBuildingVisibility = () => {
+    if (!ready) return;
+    // Keep the tile layer queryable for fallback heights and shadow extraction.
+    map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-opacity',
+      visibility.buildings && buildingData === null ? 0.92 : 0);
+    if (map.getLayer(COLORED_BUILDING_LAYER)) {
+      map.setLayoutProperty(COLORED_BUILDING_LAYER, 'visibility', buildingData === null ? 'none' : 'visible');
+      map.setPaintProperty(COLORED_BUILDING_LAYER, 'fill-extrusion-opacity', visibility.buildings ? 0.92 : 0);
+    }
+  };
+
+  const styleLandscape = () => {
+    if (!ready) return;
+    if (map.getLayer('landcover_grass')) {
+      map.setPaintProperty('landcover_grass', 'fill-color', '#8cb976');
+      map.setPaintProperty('landcover_grass', 'fill-opacity', 0.7);
+    }
+    if (map.getLayer('park')) map.setPaintProperty('park', 'fill-color', '#b7d49e');
+    if (map.getLayer('park_outline')) map.setPaintProperty('park_outline', 'line-color', '#93b887');
+    if (map.getLayer('landcover_wood')) {
+      map.setPaintProperty('landcover_wood', 'fill-color', '#76a77a');
+      map.setPaintProperty('landcover_wood', 'fill-opacity', 0.65);
+    }
+    if (map.getLayer('building')) map.setPaintProperty('building', 'fill-color', palette.colors.yes ?? UNKNOWN_BUILDING_COLOR);
+    map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-color', palette.colors.yes ?? UNKNOWN_BUILDING_COLOR);
+    colorBuildings();
+    for (const layer of ['road_path_pedestrian', 'bridge_path_pedestrian', 'tunnel_path_pedestrian']) {
+      if (map.getLayer(layer)) {
+        map.setPaintProperty(layer, 'line-color', [
+          'case', ['==', ['get', 'subclass'], 'cycleway'], '#b95349', '#ffffff',
+        ]);
+      }
+    }
+  };
 
   const installShadowLayer = () => {
     if (!map.getLayer(BUILDING_LAYER) || map.getLayer(SHADOW_LAYER)) return;
     shadowLayer = new BuildingShadowLayer((message) => {
       callbacks.onError(`GPU-schaduwen konden niet starten: ${message}`);
-    });
+    }, (gl, options) => treeLayer?.renderShadows(gl, options) ?? false);
     shadowLayer.setMesh(shadowMesh);
     shadowLayer.setSun(sunState.altitude, sunState.azimuth, sunState.daylight);
     map.addLayer(shadowLayer, BUILDING_LAYER);
     map.setLayoutProperty(SHADOW_LAYER, 'visibility', visibility.shadows ? 'visible' : 'none');
+  };
+
+  const installTreeLayer = () => {
+    if (map.getLayer('terraszon-trees-3d')) return;
+    treeLayer = new InstancedTreeLayer((message) => {
+      if (map.getLayer(TREE_MARKERS)) map.setLayerZoomRange(TREE_MARKERS, 14, 24);
+      callbacks.onError(`GPU-bomen: ${message}`);
+    });
+    treeLayer.setTrees(treeData);
+    treeLayer.setDate(treeDate);
+    treeLayer.setVisible(visibility.trees);
+    treeLayer.setSun(sunState.altitude, sunState.azimuth, sunState.daylight);
+    map.addLayer(treeLayer, COLORED_BUILDING_LAYER);
   };
 
   const extractBuildings = () => {
@@ -151,7 +230,8 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     const buildings: BuildingFeature[] = [];
     // Query the rendered layer so the snapshot matches the buildings that are
     // actually available after MapLibre's tile and style processing.
-    for (const feature of map.queryRenderedFeatures({ layers: [BUILDING_LAYER] })) {
+    const layer = buildingData === null ? BUILDING_LAYER : COLORED_BUILDING_LAYER;
+    for (const feature of map.queryRenderedFeatures({ layers: [layer] })) {
       const building = asBuilding(feature);
       if (!building) continue;
       const fragmentKey = [
@@ -185,10 +265,54 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     for (const layerId of DEFAULT_POI_LAYERS) {
       if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', 'none');
     }
-    map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-color', '#d8d3c8');
+    styleLandscape();
     map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-opacity', 0.92);
 
     installShadowLayer();
+    map.addSource(COLORED_BUILDING_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: buildingData ?? [] } });
+    map.addLayer({
+      id: COLORED_BUILDING_LAYER,
+      type: 'fill-extrusion', source: COLORED_BUILDING_SOURCE, minzoom: 14,
+      paint: {
+        'fill-extrusion-base': ['get', 'minHeight'],
+        'fill-extrusion-height': ['get', 'height'],
+        'fill-extrusion-opacity': 0.92,
+      },
+    }, BUILDING_LAYER);
+    colorBuildings();
+    updateBuildingVisibility();
+
+    map.addSource(TREE_SOURCE, {
+      type: 'geojson', data: emptyTrees,
+      attribution: 'Boomgegevens Groningen: <a href="https://data.groningen.nl/dataset/bomen/04da3775-07f0-4388-bc12-7cd7536b04cd" target="_blank" rel="noopener noreferrer">Gemeente Groningen (CC BY 4.0)</a>',
+    });
+    map.addSource(TREE_MARKER_SOURCE, { type: 'geojson', data: treeMarkers([]) });
+    map.addLayer({
+      id: TREE_LAYER,
+      type: 'fill',
+      source: TREE_SOURCE,
+      minzoom: 14,
+      maxzoom: 15,
+      paint: { 'fill-color': '#2d6945', 'fill-opacity': 0.22, 'fill-outline-color': '#235137' },
+    }, map.getLayer(SHADOW_LAYER) ? SHADOW_LAYER : BUILDING_LAYER);
+    map.addLayer({
+      id: TREE_MARKERS,
+      type: 'circle',
+      source: TREE_MARKER_SOURCE,
+      minzoom: 14,
+      maxzoom: 15,
+      // The drawn marker has a minimum size; the polygon retains the actual
+      // estimated crown size for the shadow mesh.
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 16, 5, 18, 7],
+        'circle-color': '#255d3a',
+        'circle-stroke-color': '#e8efdf',
+        'circle-stroke-width': 1,
+        'circle-opacity': 0.96,
+      },
+    }, BUILDING_LAYER);
+
+    installTreeLayer();
 
     map.addSource(TERRACE_SOURCE, { type: 'geojson', data: emptyTerraces });
     map.addLayer({
@@ -206,13 +330,15 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
           ['match', ['get', 'status'],
             'sun', '#f2a900',
             'shade', '#536b7c',
+            'filtered', '#79a885',
             '#7f817d'],
         ],
         'circle-stroke-color': [
-          'match', ['get', 'evidence'],
-          'confirmed', '#fffdf7',
-          'mapped', '#fffdf7',
-          '#536b7c',
+          'case', ['==', ['get', 'status'], 'filtered'], '#4c7756',
+          ['match', ['get', 'evidence'],
+            'confirmed', '#fffdf7',
+            'mapped', '#fffdf7',
+            '#536b7c'],
         ],
         'circle-stroke-width': ['match', ['get', 'evidence'], 'possible', 1, 2],
         'circle-opacity': 0.96,
@@ -227,7 +353,8 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       const properties = feature.properties;
       const status = properties.status === 'sun'
         ? 'In de zon'
-        : properties.status === 'shade' ? 'In de schaduw' : 'Geen daglicht';
+        : properties.status === 'filtered' ? 'Mogelijke boomschaduw / gefilterd licht'
+          : properties.status === 'shade' ? 'Gebouwschaduw' : 'Geen daglicht';
       const evidence = properties.evidence === 'confirmed'
         ? 'Terras bevestigd'
         : properties.evidence === 'mapped' ? 'Terras apart ingetekend' : 'Terras niet bevestigd';
@@ -238,6 +365,11 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       const detail = document.createElement('span');
       detail.textContent = `${status} · ${evidence}`;
       popup.append(title, detail);
+      if (properties.status === 'filtered') {
+        const estimate = document.createElement('span');
+        estimate.textContent = 'Schatting op basis van boomsoort, kroonvorm en seizoen. Bladstand en takoriëntatie zijn niet gemeten.';
+        popup.append(estimate);
+      }
 
       const details: Array<[string, unknown]> = [
         ['Type', properties.amenity],
@@ -303,6 +435,9 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   map.on('moveend', () => {
     // Keep the previous complete snapshot while the new tiles are loading.
     buildingFingerprint = '';
+    // Until the next area has loaded, show complete neutral tile buildings.
+    buildingData = null;
+    updateBuildingVisibility();
     callbacks.onViewChange(getBounds(map), map.getZoom());
   });
   map.on('webglcontextlost', () => {
@@ -312,17 +447,29 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   map.on('webglcontextrestored', () => {
     map.once('style.load', () => {
       ready = true;
-      map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-color', '#d8d3c8');
+      styleLandscape();
+      if (map.getLayer(SHADOW_LAYER)) map.removeLayer(SHADOW_LAYER);
       installShadowLayer();
-      map.setPaintProperty(
-        BUILDING_LAYER,
-        'fill-extrusion-opacity',
-        visibility.buildings ? 0.92 : 0,
-      );
+      installTreeLayer();
+      updateBuildingVisibility();
+      const buildingSource = map.getSource(COLORED_BUILDING_SOURCE) as GeoJSONSource | undefined;
+      buildingSource?.setData({ type: 'FeatureCollection', features: buildingData ?? [] });
       const terraceSource = map.getSource(TERRACE_SOURCE) as GeoJSONSource | undefined;
       terraceSource?.setData({ type: 'FeatureCollection', features: terraceData });
+      const treeSource = map.getSource(TREE_SOURCE) as GeoJSONSource | undefined;
+      treeSource?.setData({ type: 'FeatureCollection', features: treeData });
+      const treeMarkerSource = map.getSource(TREE_MARKER_SOURCE) as GeoJSONSource | undefined;
+      treeMarkerSource?.setData(treeMarkers(treeData));
+      treeLayer?.setTrees(treeData);
+      if (map.getLayer(TREE_LAYER)) {
+        map.setLayoutProperty(TREE_LAYER, 'visibility', visibility.trees ? 'visible' : 'none');
+      }
+      if (map.getLayer(TREE_MARKERS)) {
+        map.setLayoutProperty(TREE_MARKERS, 'visibility', visibility.trees ? 'visible' : 'none');
+      }
+      treeLayer?.setVisible(visibility.trees);
       if (map.getLayer(TERRACE_LAYER)) {
-        map.setFilter(TERRACE_LAYER, onlySunny ? ['==', ['get', 'status'], 'sun'] : null);
+        map.setFilter(TERRACE_LAYER, onlySunny ? SUNNY_FILTER : null);
         map.setLayoutProperty(
           TERRACE_LAYER,
           'visibility',
@@ -370,27 +517,63 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
         features: terraces,
       });
     },
+    setTrees(trees) {
+      treeData = trees;
+      if (!ready) return;
+      const source = map.getSource(TREE_SOURCE) as GeoJSONSource | undefined;
+      source?.setData({ type: 'FeatureCollection', features: trees });
+      const markers = map.getSource(TREE_MARKER_SOURCE) as GeoJSONSource | undefined;
+      markers?.setData(treeMarkers(trees));
+      treeLayer?.setTrees(trees);
+    },
+    setTreeDate(date) {
+      treeDate = date;
+      treeLayer?.setDate(date);
+    },
+    setBuildings(buildings) {
+      const tiles = ready ? map.queryRenderedFeatures({ layers: [BUILDING_LAYER] })
+        .filter((feature) => feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
+        .map((feature) => ({ geometry: feature.geometry as Polygon | MultiPolygon, properties: feature.properties })) : [];
+      buildingData = buildings?.length ? withTileHeights(buildings, tiles) : null;
+      buildingFingerprint = '';
+      if (!ready) return;
+      const source = map.getSource(COLORED_BUILDING_SOURCE) as GeoJSONSource | undefined;
+      source?.setData({ type: 'FeatureCollection', features: buildingData ?? [] });
+      updateBuildingVisibility();
+      // `idle` will extract the new rendered layer for the shadow worker.
+    },
+    refreshBuildingPalette() {
+      palette = loadPalette();
+      styleLandscape();
+    },
     setOnlySunny(enabled) {
       onlySunny = enabled;
       if (!ready || !map.getLayer(TERRACE_LAYER)) return;
-      map.setFilter(TERRACE_LAYER, enabled ? ['==', ['get', 'status'], 'sun'] : null);
+      map.setFilter(TERRACE_LAYER, enabled ? SUNNY_FILTER : null);
     },
     setVisibility(layer, visible) {
       visibility[layer] = visible;
       if (!ready) return;
       if (layer === 'buildings') {
-        // Keep the layer queryable while visually hidden; shadows use its rendered features.
-        map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-opacity', visible ? 0.92 : 0);
+        updateBuildingVisibility();
         return;
       }
-      const layerId = layer === 'shadows' ? SHADOW_LAYER : TERRACE_LAYER;
+      const layerId = layer === 'shadows' ? SHADOW_LAYER
+        : layer === 'trees' ? TREE_LAYER : TERRACE_LAYER;
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+      }
+      if (layer === 'trees' && map.getLayer(TREE_MARKERS)) {
+        map.setLayoutProperty(TREE_MARKERS, 'visibility', visible ? 'visible' : 'none');
+      }
+      if (layer === 'trees') {
+        treeLayer?.setVisible(visible);
       }
     },
     setSunLight(altitude, azimuth, daylight) {
       sunState = { altitude, azimuth, daylight };
       shadowLayer?.setSun(altitude, azimuth, daylight);
+      treeLayer?.setSun(altitude, azimuth, daylight);
       if (!ready) return;
       map.setLight({
         anchor: 'map',

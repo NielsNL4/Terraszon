@@ -109,11 +109,11 @@ const COMPOSITE_FRAGMENT_SHADER_WEBGL2 = `#version 300 es
   }
 `;
 
-function isWebGL2(gl: GL): gl is WebGL2RenderingContext {
+export function isWebGL2(gl: GL): gl is WebGL2RenderingContext {
   return typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
 }
 
-function createProgram(gl: GL, vertexSource: string, fragmentSource: string): WebGLProgram {
+export function createProgram(gl: GL, vertexSource: string, fragmentSource: string): WebGLProgram {
   const vertexShader = gl.createShader(gl.VERTEX_SHADER);
   const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
   const program = gl.createProgram();
@@ -154,19 +154,19 @@ function createProgram(gl: GL, vertexSource: string, fragmentSource: string): We
   return program;
 }
 
-function requiredAttribute(gl: GL, program: WebGLProgram, name: string): number {
+export function requiredAttribute(gl: GL, program: WebGLProgram, name: string): number {
   const location = gl.getAttribLocation(program, name);
   if (location < 0) throw new Error(`WebGL-attribuut ontbreekt: ${name}`);
   return location;
 }
 
-function requiredUniform(gl: GL, program: WebGLProgram, name: string): WebGLUniformLocation {
+export function requiredUniform(gl: GL, program: WebGLProgram, name: string): WebGLUniformLocation {
   const location = gl.getUniformLocation(program, name);
   if (!location) throw new Error(`WebGL-uniform ontbreekt: ${name}`);
   return location;
 }
 
-function matrixAtOrigin(matrix: ArrayLike<number>, origin: [number, number]): Float32Array {
+export function matrixAtOrigin(matrix: ArrayLike<number>, origin: [number, number]): Float32Array {
   const result = new Float32Array(matrix);
   const [x, y] = origin;
   result[12] = matrix[0] * x + matrix[4] * y + matrix[12];
@@ -185,6 +185,7 @@ export class BuildingShadowLayer implements CustomLayerInterface {
   private mesh: ShadowMesh = { origin: [0, 0], vertices: new Float32Array() };
   private meshPending = true;
   private vertexCount = 0;
+  private maskHasContent = false;
   private daylight = false;
   private shadowDirection: [number, number] = [0, 0];
   private cotAltitude = 0;
@@ -216,7 +217,8 @@ export class BuildingShadowLayer implements CustomLayerInterface {
     color: WebGLUniformLocation;
   };
 
-  constructor(private readonly onError: (message: string) => void) {}
+  constructor(private readonly onError: (message: string) => void,
+    private readonly renderTrees?: (gl: GL, options: CustomRenderMethodInput) => boolean) {}
 
   setMesh(mesh: ShadowMesh): void {
     this.mesh = mesh;
@@ -237,6 +239,10 @@ export class BuildingShadowLayer implements CustomLayerInterface {
 
   onAdd(map: MapLibreMap, gl: GL): void {
     this.map = map;
+    this.maskWidth = 0;
+    this.maskHeight = 0;
+    this.failed = false;
+    this.maskHasContent = false;
 
     try {
       const webgl2 = isWebGL2(gl);
@@ -301,9 +307,13 @@ export class BuildingShadowLayer implements CustomLayerInterface {
   }
 
   prerender(gl: GL, options: CustomRenderMethodInput): void {
-    if (this.failed || !this.daylight || !this.resourcesReady()) return;
+    if (gl.isContextLost() || !this.daylight) return;
+    // The restored context may draw a frame before the style.load handler has
+    // replaced this layer. Recreate invalid resources rather than using them.
+    if (this.map && this.maskProgram && !gl.isProgram(this.maskProgram)) this.onAdd(this.map, gl);
+    if (this.failed || !this.resourcesReady()) return;
     this.uploadMesh(gl);
-    if (this.vertexCount === 0 || !this.ensureMaskSize(gl)) return;
+    if (!this.ensureMaskSize(gl)) return;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer!);
     gl.viewport(0, 0, this.maskWidth, this.maskHeight);
@@ -336,10 +346,12 @@ export class BuildingShadowLayer implements CustomLayerInterface {
     gl.uniform2fv(locations.direction, this.shadowDirection);
     gl.uniform1f(locations.cotAltitude, this.cotAltitude);
     gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount);
+    this.maskHasContent = this.vertexCount > 0;
+    this.maskHasContent = (this.renderTrees?.(gl, options) ?? false) || this.maskHasContent;
   }
 
   render(gl: GL): void {
-    if (this.failed || !this.daylight || this.vertexCount === 0 || !this.resourcesReady()) return;
+    if (gl.isContextLost() || this.failed || !this.daylight || !this.maskHasContent || !this.resourcesReady()) return;
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
     gl.disable(gl.CULL_FACE);
@@ -349,6 +361,7 @@ export class BuildingShadowLayer implements CustomLayerInterface {
     gl.depthMask(false);
     gl.colorMask(true, true, true, true);
     gl.enable(gl.BLEND);
+    gl.blendEquation(gl.FUNC_ADD);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
     const locations = this.compositeLocations!;

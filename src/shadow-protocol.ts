@@ -1,5 +1,6 @@
 import type {
   BuildingFeature,
+  TreeFeature,
   ShadowMesh,
   TerracePoint,
   TerraceStatusResult,
@@ -7,9 +8,10 @@ import type {
 
 export type ShadowWorkerRequest =
   | {
-    type: 'set-buildings';
+    type: 'set-obstacles';
     generation: number;
     buildings: BuildingFeature[];
+    trees: TreeFeature[];
   }
   | {
     type: 'classify';
@@ -19,6 +21,7 @@ export type ShadowWorkerRequest =
     altitude: number;
     azimuth: number;
     daylight: boolean;
+    date: string;
   };
 
 export type ShadowWorkerResponse =

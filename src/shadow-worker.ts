@@ -5,6 +5,7 @@ import {
   prepareShadowPolygons,
   type PreparedShadowPolygon,
 } from './shadows';
+import { prepareTreeObstacles, type PreparedTree } from './tree-shadows';
 
 type WorkerScope = {
   onmessage: ((event: MessageEvent<ShadowWorkerRequest>) => void) | null;
@@ -14,16 +15,18 @@ type WorkerScope = {
 const workerScope = self as unknown as WorkerScope;
 let generation = 0;
 let polygons: PreparedShadowPolygon[] = [];
+let trees: PreparedTree[] = [];
 let generationValid = true;
 
 workerScope.onmessage = (event) => {
   const request = event.data;
 
-  if (request.type === 'set-buildings') {
+  if (request.type === 'set-obstacles') {
     generation = request.generation;
     generationValid = false;
     try {
       polygons = prepareShadowPolygons(request.buildings);
+      trees = prepareTreeObstacles(request.trees);
       const mesh = buildShadowMesh(polygons);
       generationValid = true;
       workerScope.postMessage({
@@ -33,6 +36,7 @@ workerScope.onmessage = (event) => {
       }, [mesh.vertices.buffer]);
     } catch (error) {
       polygons = [];
+      trees = [];
       generationValid = false;
       const mesh = buildShadowMesh([]);
       workerScope.postMessage({ type: 'mesh', generation, mesh }, [mesh.vertices.buffer]);
@@ -68,6 +72,8 @@ workerScope.onmessage = (event) => {
         request.altitude,
         request.azimuth,
         request.daylight,
+        trees,
+        request.date,
       ),
     });
   } catch (error) {

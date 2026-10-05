@@ -1,6 +1,6 @@
 import type { TerraceEvidence, TerraceFeature, TerraceStatusResult } from './types';
 
-const OVERPASS_ENDPOINTS = [
+export const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -156,12 +156,13 @@ export function applyTerraceStatuses(
   terraces: TerraceFeature[],
   statuses: TerraceStatusResult[],
 ): TerraceFeature[] {
-  const statusById = new Map(statuses.map(({ id, status }) => [id, status]));
+  const statusById = new Map(statuses.map(({ id, status, shadeSource }) => [id, { status, shadeSource }]));
   return terraces.map((terrace) => ({
     ...terrace,
     properties: {
       ...terrace.properties,
-      status: statusById.get(terrace.properties.id) ?? terrace.properties.status,
+        status: statusById.get(terrace.properties.id)?.status ?? terrace.properties.status,
+        shadeSource: statusById.get(terrace.properties.id)?.shadeSource,
     },
   }));
 }

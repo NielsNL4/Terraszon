@@ -1,5 +1,6 @@
 import earcut, { flatten } from 'earcut';
 import type { Position } from 'geojson';
+import { possibleTreeShade, type PreparedTree } from './tree-shadows';
 import type {
   BuildingFeature,
   ShadowMesh,
@@ -220,15 +221,19 @@ function segmentIntersectsPolygon(start: Position, end: Position, polygon: Prepa
   ));
 }
 
-function pointInBuildingShadows(
+function pointInProjectedShadows(
   point: Position,
   polygons: PreparedShadowPolygon[],
   vectorForHeight: (height: number) => { east: number; north: number } | null,
+  shadeUnderFootprint = false,
 ): boolean {
   for (const polygon of polygons) {
     // A restaurant POI often uses the center of its containing building as
-    // its location. That building cannot cast a shadow onto the POI itself.
-    if (pointInPolygon(point, polygon.rings)) continue;
+    // its location. Buildings cannot shade themselves, but a tree canopy can.
+    if (pointInPolygon(point, polygon.rings)) {
+      if (shadeUnderFootprint) return true;
+      continue;
+    }
     const vector = vectorForHeight(polygon.height);
     if (!vector) continue;
 
@@ -266,7 +271,7 @@ export function isPointInBuildingShadows(
   altitudeDegrees: number,
   azimuthDegrees: number,
 ): boolean {
-  return pointInBuildingShadows(
+  return pointInProjectedShadows(
     point,
     polygons,
     vectorCache(altitudeDegrees, azimuthDegrees),
@@ -279,16 +284,18 @@ export function classifyTerracePoints(
   altitudeDegrees: number,
   azimuthDegrees: number,
   daylight: boolean,
+  trees: PreparedTree[] = [],
+  date = '2001-07-01',
 ): TerraceStatusResult[] {
   const vectorForHeight = vectorCache(altitudeDegrees, azimuthDegrees);
-  return terraces.map((terrace) => ({
-    id: terrace.id,
-    status: !daylight
-      ? 'night'
-      : pointInBuildingShadows(
-        terrace.coordinates,
-        polygons,
-        vectorForHeight,
-      ) ? 'shade' : 'sun',
-  }));
+  return terraces.map((terrace) => {
+    if (!daylight) return { id: terrace.id, status: 'night' };
+    if (pointInProjectedShadows(terrace.coordinates, polygons, vectorForHeight)) {
+      return { id: terrace.id, status: 'shade', shadeSource: 'building' };
+    }
+    if (possibleTreeShade(terrace.coordinates, trees, altitudeDegrees, azimuthDegrees, date)) {
+      return { id: terrace.id, status: 'filtered', shadeSource: 'tree' };
+    }
+    return { id: terrace.id, status: 'sun' };
+  });
 }

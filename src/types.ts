@@ -1,4 +1,5 @@
 import type { Feature, MultiPolygon, Point, Polygon, Position } from 'geojson';
+import type { LeafCycle, TreeProfileId } from './tree-profiles';
 
 export type SunState = {
   altitude: number;
@@ -14,13 +15,29 @@ export type BuildingProperties = {
 };
 
 export type BuildingFeature = Feature<Polygon | MultiPolygon, BuildingProperties>;
+export type CategorizedBuilding = Feature<Polygon | MultiPolygon, BuildingProperties & {
+  buildingType: string;
+  minHeight: number;
+  hasHeight: boolean;
+  isPart: boolean;
+}>;
+export type TreeFeature = Feature<Polygon, BuildingProperties & {
+  species?: string;
+  scientificName?: string;
+  heightClass?: string;
+  profile?: TreeProfileId;
+  leafCycle?: LeafCycle;
+  phenologyShift?: number;
+  crownRadius?: number;
+  rotation?: number;
+}>;
 
 export type ShadowMesh = {
   origin: [number, number];
   vertices: Float32Array;
 };
 
-export type TerraceStatus = 'sun' | 'shade' | 'night';
+export type TerraceStatus = 'sun' | 'shade' | 'filtered' | 'night';
 export type TerraceEvidence = 'confirmed' | 'possible' | 'mapped';
 
 export type TerraceProperties = {
@@ -28,6 +45,7 @@ export type TerraceProperties = {
   name: string;
   amenity: string;
   status: TerraceStatus;
+  shadeSource?: 'building' | 'tree';
   evidence: TerraceEvidence;
   cuisine?: string;
   openingHours?: string;
@@ -53,4 +71,5 @@ export type TerracePoint = {
 export type TerraceStatusResult = {
   id: string;
   status: TerraceStatus;
+  shadeSource?: 'building' | 'tree';
 };

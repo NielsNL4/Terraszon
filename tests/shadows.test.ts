@@ -6,7 +6,9 @@ import {
   prepareShadowPolygons,
   shadowVector,
 } from '../src/shadows';
-import type { BuildingFeature } from '../src/types';
+import type { BuildingFeature, TreeFeature } from '../src/types';
+import { parseTrees } from '../src/trees';
+import { prepareTreeObstacles, possibleTreeShade } from '../src/tree-shadows';
 
 const building: BuildingFeature = {
   type: 'Feature',
@@ -71,7 +73,7 @@ describe('shadow projection', () => {
     const polygons = prepareShadowPolygons([building]);
     const terraces = [{ id: 'one', coordinates: [6.000025, 53.00007] }];
     expect(classifyTerracePoints(terraces, polygons, 45, 180, true)).toEqual([
-      { id: 'one', status: 'shade' },
+      { id: 'one', status: 'shade', shadeSource: 'building' },
     ]);
     expect(classifyTerracePoints(terraces, polygons, 45, 180, false)).toEqual([
       { id: 'one', status: 'night' },
@@ -83,6 +85,53 @@ describe('shadow projection', () => {
     const terraces = [{ id: 'inside', coordinates: [6.000025, 53.00001] }];
     expect(classifyTerracePoints(terraces, polygons, 45, 180, true)).toEqual([
       { id: 'inside', status: 'sun' },
+    ]);
+  });
+
+  it('shades under a tree canopy and down-sun, but not when trees are switched off', () => {
+    const trees: TreeFeature[] = parseTrees({ elements: [{
+      type: 'node', id: 7, lat: 53, lon: 6, tags: { natural: 'tree', height: '10', diameter_crown: '6' },
+    }] });
+    const canopy = prepareTreeObstacles(trees);
+    const terraces = [
+      { id: 'under', coordinates: [6, 53] },
+      { id: 'behind', coordinates: [6, 53.00009] },
+      { id: 'away', coordinates: [6.001, 53] },
+    ];
+    expect(classifyTerracePoints(terraces, [], 45, 180, true, canopy)).toEqual([
+      { id: 'under', status: 'filtered', shadeSource: 'tree' },
+      { id: 'behind', status: 'filtered', shadeSource: 'tree' },
+      { id: 'away', status: 'sun' },
+    ]);
+    expect(classifyTerracePoints(terraces, [], 45, 180, true)).toEqual(
+      terraces.map(({ id }) => ({ id, status: 'sun' })),
+    );
+    expect(classifyTerracePoints(terraces, [], 45, 180, false, canopy)).toEqual(
+      terraces.map(({ id }) => ({ id, status: 'night' })),
+    );
+  });
+
+  it('laat een bladloze kroon licht door, behoudt takschaduw en rekent een hoge kroon niet als grondvolume', () => {
+    const trees = parseTrees({ elements: [{ type: 'node', id: 1, lat: 53, lon: 6,
+      tags: { natural: 'tree', species: 'Tilia x europaea', height: '15', diameter_crown: '8' } }] });
+    trees[0].properties.rotation = 0;
+    const prepared = prepareTreeObstacles(trees);
+    const underEdge = [6 + 2 / (111_320 * Math.cos(53 * Math.PI / 180)), 53];
+    expect(possibleTreeShade(underEdge, prepared, 90, 180, '2026-07-15')).toBe(true);
+    expect(possibleTreeShade(underEdge, prepared, 90, 180, '2026-01-15')).toBe(false);
+    expect(possibleTreeShade([6, 53], prepared, 90, 180, '2026-01-15')).toBe(true);
+    expect(possibleTreeShade(underEdge, prepared, 10, 0, '2026-07-15')).toBe(false);
+    const evergreen = parseTrees({ elements: [{ type: 'node', id: 2, lat: 53, lon: 6,
+      tags: { natural: 'tree', species: 'Picea abies', height: '15', diameter_crown: '8' } }] });
+    expect(possibleTreeShade(underEdge, prepareTreeObstacles(evergreen), 90, 180, '2026-01-15')).toBe(true);
+  });
+
+  it('houdt gebouwschaduw doorslaggevend, ook wanneer een boom eveneens licht kan afschermen', () => {
+    const trees = prepareTreeObstacles(parseTrees({ elements: [{ type: 'node', id: 1, lat: 53.00007, lon: 6.000025,
+      tags: { natural: 'tree', species: 'Tilia x europaea', height: '15' } }] }));
+    expect(classifyTerracePoints([{ id: 'one', coordinates: [6.000025, 53.00007] }],
+      prepareShadowPolygons([building]), 45, 180, true, trees, '2026-07-15')).toEqual([
+      { id: 'one', status: 'shade', shadeSource: 'building' },
     ]);
   });
 });

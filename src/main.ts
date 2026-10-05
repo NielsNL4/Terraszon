@@ -1,6 +1,9 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { createTerraceMap, type ViewBounds } from './map';
+import { fetchBuildings } from './building-types';
+import { PALETTE_STORAGE_KEY } from './building-palette';
+import { searchPlaces, type SearchResult } from './search';
 import type { ShadowWorkerRequest, ShadowWorkerResponse } from './shadow-protocol';
 import {
   dateAtMinutes,
@@ -9,7 +12,8 @@ import {
   getSunState,
 } from './sun';
 import { applyTerraceStatuses, fetchTerraces } from './terraces';
-import type { TerraceFeature } from './types';
+import { fetchTrees } from './trees';
+import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App-element ontbreekt');
@@ -44,6 +48,20 @@ app.innerHTML = `
       <p>Vind een tafel in het licht.</p>
     </header>
 
+    <div class="map-actions">
+      <div class="search-box map-card">
+        <label class="search-label" for="place-search">Zoek een locatie</label>
+        <div class="search-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m14.5 14.5 6 6"/></svg>
+          <input id="place-search" type="search" placeholder="Adres, plaats of straat" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-results" />
+        </div>
+        <div id="search-results" class="search-results" role="listbox" aria-label="Zoekresultaten" hidden></div>
+      </div>
+      <button id="my-location" class="location-button map-card" type="button" aria-label="Ga naar mijn locatie" title="Ga naar mijn locatie">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
+      </button>
+    </div>
+
     <section class="solar-card map-card" aria-live="polite">
       <span id="day-state" class="eyebrow">ZON BOVEN DE STAD</span>
       <strong id="solar-time">${formatMinutes(currentMinutes)}</strong>
@@ -71,11 +89,14 @@ app.innerHTML = `
         <div class="toggles" aria-label="Kaartlagen">
           <label><input id="buildings" type="checkbox" checked /><span>3D</span></label>
           <label><input id="shadows" type="checkbox" checked /><span>Schaduw</span></label>
+          <label><input id="trees" type="checkbox" checked /><span>Bomen</span></label>
           <label><input id="terraces" type="checkbox" checked /><span>Terrassen</span></label>
           <label class="sun-only"><input id="sun-only" type="checkbox" /><span>Alleen zon</span></label>
         </div>
-        <div class="legend"><span class="dot sun"></span>Zon <span class="dot shade"></span>Schaduw <span class="dot possible"></span>Mogelijke horeca</div>
+        <div class="legend"><span class="dot sun"></span>Zon <span class="dot shade"></span>Schaduw <span class="dot filtered"></span>Gefilterd licht <span class="dot tree"></span>Bomen <span class="dot possible"></span>Mogelijke horeca</div>
       </div>
+      <div class="panel-links"><p id="tree-status" class="tree-status" role="status" aria-live="polite">Bomen laden…</p><a href="./gebouwkleuren.html">Gebouwkleuren aanpassen</a></div>
+      <p id="building-status" class="building-status" role="status" aria-live="polite">Gebouwtypes laden…</p>
     </section>
 
     <div id="notice" class="notice" role="status"></div>
@@ -100,15 +121,33 @@ const loading = requiredElement<HTMLElement>('#loading');
 const loadMap = requiredElement<HTMLElement>('#load-map');
 const loadBuildings = requiredElement<HTMLElement>('#load-buildings');
 const loadTerracesStep = requiredElement<HTMLElement>('#load-terraces');
+const searchInput = requiredElement<HTMLInputElement>('#place-search');
+const searchResults = requiredElement<HTMLElement>('#search-results');
+const searchBox = requiredElement<HTMLElement>('.search-box');
+const locationButton = requiredElement<HTMLButtonElement>('#my-location');
+const treeStatus = requiredElement<HTMLElement>('#tree-status');
+const buildingStatus = requiredElement<HTMLElement>('#building-status');
 
 let terraces: TerraceFeature[] = [];
+let trees: TreeFeature[] = [];
+let buildings: BuildingFeature[] = [];
+let treesEnabled = true;
 let updateFrame = 0;
 let classifyOnNextFrame = false;
 let terraceRequest: AbortController | null = null;
+let treeRequest: AbortController | null = null;
+let buildingTypeRequest: AbortController | null = null;
 let noticeTimer = 0;
 let loadingFinished = false;
 let shadowRequestId = 0;
-let buildingGeneration = 0;
+let obstacleGeneration = 0;
+let searchTimer = 0;
+let searchRequest: AbortController | null = null;
+let searchVersion = 0;
+let searchMatches: SearchResult[] = [];
+let activeSearchIndex = -1;
+let locationRequestId = 0;
+let initialLocationAllowed = true;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
@@ -144,7 +183,7 @@ function renderSolarState(classifyTerraceStatus = false): void {
     const request: ShadowWorkerRequest = {
       type: 'classify',
       id: shadowRequestId,
-      generation: buildingGeneration,
+      generation: obstacleGeneration,
       terraces: terraces.map((terrace) => ({
         id: terrace.properties.id,
         coordinates: terrace.geometry.coordinates,
@@ -152,10 +191,12 @@ function renderSolarState(classifyTerraceStatus = false): void {
       altitude: sun.altitude,
       azimuth: sun.azimuth,
       daylight: sun.isDaylight,
+      date: dateInput.value,
     };
     shadowWorker.postMessage(request);
   }
   terraceMap.setSunLight(sun.altitude, sun.azimuth, sun.isDaylight);
+  terraceMap.setTreeDate(dateInput.value);
 
   solarTime.textContent = formatMinutes(minutes);
   solarDetail.textContent = sun.isDaylight
@@ -182,12 +223,12 @@ function scheduleSolarRender(classifyTerraceStatus = false): void {
 shadowWorker.onmessage = (event: MessageEvent<ShadowWorkerResponse>) => {
   const result = event.data;
   if (result.type === 'error') {
-    const isCurrent = result.generation === buildingGeneration
+    const isCurrent = result.generation === obstacleGeneration
       && (result.operation === 'mesh' || result.id === shadowRequestId);
     if (isCurrent) showNotice('Schaduwen konden niet worden berekend.');
     return;
   }
-  if (result.generation !== buildingGeneration) return;
+  if (result.generation !== obstacleGeneration) return;
   if (result.type === 'mesh') {
     terraceMap.setShadowMesh(result.mesh);
     return;
@@ -198,6 +239,71 @@ shadowWorker.onmessage = (event: MessageEvent<ShadowWorkerResponse>) => {
 };
 
 shadowWorker.onerror = () => showNotice('Schaduwen konden niet worden berekend.');
+
+function updateObstacles(): void {
+  obstacleGeneration += 1;
+  const request: ShadowWorkerRequest = {
+    type: 'set-obstacles', generation: obstacleGeneration, buildings,
+    trees: treesEnabled ? trees : [],
+  };
+  shadowWorker.postMessage(request);
+  scheduleSolarRender(true);
+}
+
+async function loadTrees(bounds: ViewBounds, zoom: number): Promise<void> {
+  treeRequest?.abort();
+  if (trees.length) {
+    trees = [];
+    terraceMap.setTrees([]);
+    updateObstacles();
+  }
+  if (!treesEnabled || zoom < 14) {
+    treeStatus.textContent = treesEnabled ? 'Zoom verder in om bomen te zien.' : 'Bomen uitgeschakeld.';
+    return;
+  }
+  treeStatus.textContent = 'Bomen laden…';
+  const request = new AbortController();
+  treeRequest = request;
+  try {
+    const nextTrees = await fetchTrees(bounds, request.signal);
+    if (request.signal.aborted || !treesEnabled) return;
+    trees = nextTrees;
+    terraceMap.setTrees(trees);
+    updateObstacles();
+    treeStatus.textContent = trees.length
+      ? `${trees.length} bomen${trees.length === 1_000 ? ' (maximum)' : ''} · boomvorm en bladstand zijn geschat.`
+      : 'Geen ingetekende bomen in dit kaartbeeld.';
+  } catch (error) {
+    if (request.signal.aborted) return;
+    treeStatus.textContent = 'Bomen konden niet laden. Verplaats de kaart om opnieuw te proberen.';
+    console.error('Bomen laden mislukt', error);
+  }
+}
+
+async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise<void> {
+  buildingTypeRequest?.abort();
+  if (zoom < 14) {
+    buildingStatus.textContent = 'Zoom in voor gebouwkleuren per type.';
+    return;
+  }
+  buildingStatus.textContent = 'Gebouwtypes laden…';
+  const request = new AbortController();
+  buildingTypeRequest = request;
+  try {
+    const result = await fetchBuildings(bounds, request.signal);
+    if (request.signal.aborted) return;
+    terraceMap.setBuildings(result.capped ? null : result.buildings);
+    const typed = result.buildings.filter((building) => !['yes', 'unknown', 'undefined', 'unclassified', 'unidentified', 'other', 'true', 'maybe', 'fixme', 'Y'].includes(building.properties.buildingType)).length;
+    buildingStatus.textContent = result.capped
+      ? 'Veel gebouwen in beeld. Zoom verder in voor kleuren per type.'
+      : `${result.buildings.length} gebouwen geladen · ${typed} met een specifiek type.`;
+  } catch (error) {
+    if (request.signal.aborted) return;
+    terraceMap.setBuildings(null);
+    buildingStatus.textContent = 'Gebouwdata niet beschikbaar. Verplaats de kaart om opnieuw te proberen.';
+    console.error('Gebouwtypes laden mislukt', error);
+  }
+}
 
 async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   terraceRequest?.abort();
@@ -227,20 +333,16 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onBuildings(nextBuildings, capped) {
-    buildingGeneration += 1;
-    const request: ShadowWorkerRequest = {
-      type: 'set-buildings',
-      generation: buildingGeneration,
-      buildings: nextBuildings,
-    };
-    shadowWorker.postMessage(request);
+    buildings = nextBuildings;
+    updateObstacles();
     setLoadingStep(loadBuildings, 'done');
-    scheduleSolarRender(true);
     if (capped) showNotice('Veel gebouwen zichtbaar. Zoom verder in voor preciezere schaduwen.');
   },
   onViewChange(bounds, zoom) {
     scheduleSolarRender();
     void loadTerraces(bounds, zoom);
+    void loadTrees(bounds, zoom);
+    void loadBuildingCategories(bounds, zoom);
   },
   onMapReady() {
     setLoadingStep(loadMap, 'done');
@@ -249,6 +351,10 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   },
   onError(message) {
     console.error(message);
+    if (message.startsWith('GPU-bomen')) {
+      showNotice('3D-bomen konden niet starten. De boomsymbolen blijven zichtbaar.');
+      return;
+    }
     if (message.startsWith('GPU-schaduwen')) {
       showNotice('Schaduwen konden niet starten. De kaart blijft beschikbaar.');
       return;
@@ -256,6 +362,179 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     showNotice('Een deel van de kaarttegels kon niet laden. Probeer opnieuw te bewegen of in te zoomen.');
   },
 });
+
+window.addEventListener('storage', (event) => {
+  if (event.key === PALETTE_STORAGE_KEY || event.key === null) terraceMap.refreshBuildingPalette();
+});
+window.addEventListener('terraszon:palette-change', () => terraceMap.refreshBuildingPalette());
+window.addEventListener('pageshow', () => terraceMap.refreshBuildingPalette());
+
+function closeSearch(): void {
+  searchResults.hidden = true;
+  searchInput.setAttribute('aria-expanded', 'false');
+  searchInput.removeAttribute('aria-activedescendant');
+  activeSearchIndex = -1;
+}
+
+function setSearchMessage(message: string): void {
+  searchResults.replaceChildren();
+  const row = document.createElement('div');
+  row.className = 'search-message';
+  row.textContent = message;
+  searchResults.append(row);
+  searchResults.hidden = false;
+  searchInput.setAttribute('aria-expanded', 'true');
+}
+
+function setActiveSearchIndex(index: number): void {
+  activeSearchIndex = index;
+  for (const [position, option] of searchResults.querySelectorAll<HTMLElement>('[role="option"]').entries()) {
+    option.setAttribute('aria-selected', String(position === index));
+  }
+  if (index < 0) searchInput.removeAttribute('aria-activedescendant');
+  else searchInput.setAttribute('aria-activedescendant', `search-result-${index}`);
+}
+
+function selectSearchResult(result: SearchResult): void {
+  initialLocationAllowed = false;
+  searchInput.value = [result.label, result.detail].filter(Boolean).join(', ');
+  searchVersion += 1;
+  searchRequest?.abort();
+  window.clearTimeout(searchTimer);
+  searchMatches = [];
+  closeSearch();
+  terraceMap.map.flyTo({ center: result.coordinates, zoom: result.kind === 'place' ? 14 : 16, essential: true });
+}
+
+function renderSearchResults(): void {
+  searchResults.replaceChildren();
+  if (!searchMatches.length) {
+    setSearchMessage('Geen locaties gevonden. Probeer een andere zoekterm.');
+    return;
+  }
+  searchMatches.forEach((result, index) => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.id = `search-result-${index}`;
+    option.className = 'search-option';
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', 'false');
+    const label = document.createElement('strong');
+    label.textContent = result.label;
+    const detail = document.createElement('span');
+    detail.textContent = result.detail || 'Locatie';
+    option.append(label, detail);
+    option.addEventListener('click', () => selectSearchResult(result));
+    searchResults.append(option);
+  });
+  searchResults.hidden = false;
+  searchInput.setAttribute('aria-expanded', 'true');
+}
+
+searchInput.addEventListener('input', () => {
+  const query = searchInput.value.trim();
+  if (query) initialLocationAllowed = false;
+  searchVersion += 1;
+  const version = searchVersion;
+  window.clearTimeout(searchTimer);
+  searchRequest?.abort();
+  searchMatches = [];
+  closeSearch();
+  if (query.length < 3) return;
+  searchTimer = window.setTimeout(async () => {
+    const controller = new AbortController();
+    searchRequest = controller;
+    setSearchMessage('Locaties zoeken…');
+    try {
+      const matches = await searchPlaces(query, controller.signal);
+      if (version !== searchVersion) return;
+      searchMatches = matches;
+      renderSearchResults();
+    } catch {
+      if (version === searchVersion) setSearchMessage('Zoeken lukt nu niet. Probeer het later opnieuw.');
+    }
+  }, 400);
+});
+
+searchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    searchVersion += 1;
+    searchRequest?.abort();
+    window.clearTimeout(searchTimer);
+    searchMatches = [];
+    closeSearch();
+    return;
+  }
+  if (!searchMatches.length || searchResults.hidden) return;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    setActiveSearchIndex(activeSearchIndex < 0 && direction < 0
+      ? searchMatches.length - 1
+      : (activeSearchIndex + direction) % searchMatches.length);
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    selectSearchResult(searchMatches[activeSearchIndex < 0 ? 0 : activeSearchIndex]);
+  }
+});
+
+searchInput.addEventListener('focus', () => {
+  if (searchMatches.length) renderSearchResults();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!searchBox.contains(event.target as Node)) {
+    searchVersion += 1;
+    searchRequest?.abort();
+    window.clearTimeout(searchTimer);
+    searchMatches = [];
+    closeSearch();
+  }
+});
+
+function locateUser(initial = false): void {
+  const requestId = ++locationRequestId;
+  if (!navigator.geolocation || !window.isSecureContext) {
+    if (!initial) showNotice('Locatie is alleen beschikbaar via HTTPS of localhost.');
+    else showNotice('Locatie niet beschikbaar. De kaart opent in Groningen.');
+    return;
+  }
+
+  locationButton.disabled = true;
+  locationButton.classList.add('locating');
+  locationButton.setAttribute('aria-label', 'Locatie bepalen…');
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      if (requestId !== locationRequestId) return;
+      locationButton.disabled = false;
+      locationButton.classList.remove('locating');
+      locationButton.setAttribute('aria-label', 'Ga naar mijn locatie');
+      if (initial && !initialLocationAllowed) return;
+      terraceMap.map.flyTo({
+        center: [position.coords.longitude, position.coords.latitude],
+        zoom: 15.5,
+        essential: true,
+      });
+    },
+    (error) => {
+      if (requestId !== locationRequestId) return;
+      locationButton.disabled = false;
+      locationButton.classList.remove('locating');
+      locationButton.setAttribute('aria-label', 'Ga naar mijn locatie');
+      if (initial && !initialLocationAllowed) return;
+      showNotice(error.code === 1
+        ? 'Locatietoegang geweigerd. Zoek een plaats of probeer de locatieknop opnieuw.'
+        : initial ? 'Locatie niet gevonden. De kaart opent in Groningen.'
+          : 'Locatie niet gevonden. Probeer het opnieuw.');
+    },
+    { enableHighAccuracy: false, timeout: 8_000, maximumAge: 60_000 },
+  );
+}
+
+terraceMap.map.on('movestart', (event) => {
+  if (event.originalEvent) initialLocationAllowed = false;
+});
+locationButton.addEventListener('click', () => locateUser());
+locateUser(true);
 
 dateInput.addEventListener('change', () => {
   scheduleSolarRender(true);
@@ -268,6 +547,16 @@ for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
     terraceMap.setVisibility(layer, (event.currentTarget as HTMLInputElement).checked);
   });
 }
+
+requiredElement<HTMLInputElement>('#trees').addEventListener('change', (event) => {
+  treesEnabled = (event.currentTarget as HTMLInputElement).checked;
+  terraceMap.setVisibility('trees', treesEnabled);
+  const bounds = terraceMap.map.getBounds();
+  void loadTrees({
+    south: bounds.getSouth(), west: bounds.getWest(),
+    north: bounds.getNorth(), east: bounds.getEast(),
+  }, terraceMap.map.getZoom());
+});
 
 requiredElement<HTMLInputElement>('#sun-only').addEventListener('change', (event) => {
   terraceMap.setOnlySunny((event.currentTarget as HTMLInputElement).checked);
