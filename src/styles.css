@@ -277,6 +277,10 @@ input[type="date"] {
 .dot.possible { background: #fffdf7; border: 1px solid #536b7c; }
 .tree-status { margin: 8px 0 0; color: #555e52; font-size: 10px; }
 .building-status { margin: 5px 0 0; color: #555e52; font-size: 10px; }
+.building-status-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; }
+#retry-buildings { padding: 2px 0; border: 0; background: transparent; color: #3d6553; font: inherit; font-size: 11px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+#retry-buildings[hidden] { display: none; }
+#retry-buildings:focus-visible { outline: 2px solid #ba8100; outline-offset: 2px; }
 .panel-links { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
 .panel-links a { color: #3d6553; font-size: 11px; font-weight: 700; text-underline-offset: 3px; }
 .panel-links a:focus-visible { outline: 2px solid #ba8100; outline-offset: 2px; }

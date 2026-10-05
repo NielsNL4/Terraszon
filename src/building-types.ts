@@ -1,8 +1,6 @@
 import type { Polygon, Position } from 'geojson';
-import { OVERPASS_ENDPOINTS } from './terraces';
 import type { CategorizedBuilding } from './types';
 
-type Bounds = { south: number; west: number; north: number; east: number };
 type OSMPoint = { lat: number; lon: number };
 type OSMMember = { type: string; ref: number; role: string; geometry?: OSMPoint[] };
 type OSMElement = {
@@ -12,9 +10,6 @@ type OSMElement = {
   geometry?: OSMPoint[];
   members?: OSMMember[];
 };
-export type BuildingData = { buildings: CategorizedBuilding[]; capped: boolean };
-export const MAX_FETCHED_BUILDINGS = 20_000;
-const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 function samePoint(a: Position, b: Position): boolean {
   return a[0] === b[0] && a[1] === b[1];
@@ -198,52 +193,44 @@ export function withTileHeights(
   });
 }
 
-export async function fetchBuildings(bounds: Bounds, signal: AbortSignal): Promise<BuildingData> {
-  if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-  const values = [bounds.south, bounds.west, bounds.north, bounds.east].map((value) => value.toFixed(4));
-  const key = `terraszon:v2:building-geometry:${values.join(':')}`;
-  try {
-    const cached = localStorage.getItem(key);
-    if (cached) {
-      const parsed = JSON.parse(cached) as { savedAt: number; data: BuildingData };
-      if (Date.now() - parsed.savedAt < CACHE_TTL && Array.isArray(parsed.data?.buildings)
-        && parsed.data.buildings.length <= MAX_FETCHED_BUILDINGS && parsed.data.capped === false) return parsed.data;
-    }
-  } catch { /* Browser storage is optional. */ }
+export function buildingBox(geometry: CategorizedBuilding['geometry']) {
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  const box = { west: Infinity, south: Infinity, east: -Infinity, north: -Infinity };
+  for (const rings of polygons) for (const point of rings[0]) {
+    box.west = Math.min(box.west, point[0]); box.east = Math.max(box.east, point[0]);
+    box.south = Math.min(box.south, point[1]); box.north = Math.max(box.north, point[1]);
+  }
+  return box;
+}
 
-  const bbox = values.join(',');
-  // A modest memory reservation fits more readily on busy public instances
-  // than Overpass's default 512 MB reservation, while covering our bounded area.
-  const query = `[out:json][timeout:25][maxsize:67108864];(way["building"](${bbox});relation["building"]["type"="multipolygon"](${bbox});way["building:part"](${bbox});relation["building:part"]["type"="multipolygon"](${bbox}););out geom ${MAX_FETCHED_BUILDINGS + 1};`;
-  let lastError: unknown;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 30_000);
-    const abort = () => controller.abort();
-    signal.addEventListener('abort', abort, { once: true });
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST', body: new URLSearchParams({ data: query }), signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`${endpoint} gaf status ${response.status}`);
-      const payload = await response.json() as { elements?: OSMElement[]; remark?: string };
-      if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
-      if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-      // Never replace the complete base map with an arbitrarily truncated area.
-      if (payload.elements.length > MAX_FETCHED_BUILDINGS) return { buildings: [], capped: true };
-      const result = { buildings: parseBuildings({ elements: payload.elements }), capped: false };
-      if (result.buildings.length) {
-        try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: result })); } catch { /* Cache is optional. */ }
-      }
-      return result;
-    } catch (error) {
-      if (signal.aborted) throw error;
-      lastError = error;
-    } finally {
-      window.clearTimeout(timeout);
-      signal.removeEventListener('abort', abort);
+// Fill unloaded/failed areas with individual neutral tile footprints. Loaded
+// OSM polygons replace matching footprints by position, never by a merged ID.
+export function mergeBuildingGeometry(known: CategorizedBuilding[], fallback: CategorizedBuilding[]): CategorizedBuilding[] {
+  const cell = (value: number) => Math.floor(value * 2_000);
+  const cells = new Map<string, CategorizedBuilding[]>();
+  const large: CategorizedBuilding[] = [];
+  for (const building of known) {
+    const box = buildingBox(building.geometry);
+    const west = cell(box.west), east = cell(box.east), south = cell(box.south), north = cell(box.north);
+    if ((east - west + 1) * (north - south + 1) > 10_000) { large.push(building); continue; }
+    for (let x = west; x <= east; x++) for (let y = south; y <= north; y++) {
+      const key = `${x}:${y}`;
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key)!.push(building);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
+  const result = [...known];
+  for (const tile of fallback) {
+    const point = buildingSample(tile);
+    const candidates = [...(cells.get(`${cell(point[0])}:${cell(point[1])}`) ?? []), ...large]
+      .filter((building) => buildingContains(building, point));
+    const match = candidates.sort((a, b) => b.properties.height - a.properties.height)[0];
+    if (!match) result.push(tile);
+    else if (tile.properties.height > match.properties.height + 0.1) {
+      // Keep tall tile-only parts (e.g. a tower) instead of replacing them with
+      // a lower outline, but inherit the containing building's usage/color.
+      result.push({ ...tile, properties: { ...tile.properties, buildingType: match.properties.buildingType } });
+    }
+  }
+  return result;
 }

@@ -1,7 +1,7 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { createTerraceMap, type ViewBounds } from './map';
-import { fetchBuildings } from './building-types';
+import { fetchBuildings, type BuildingData } from './building-loader';
 import { PALETTE_STORAGE_KEY } from './building-palette';
 import { searchPlaces, type SearchResult } from './search';
 import type { ShadowWorkerRequest, ShadowWorkerResponse } from './shadow-protocol';
@@ -96,7 +96,7 @@ app.innerHTML = `
         <div class="legend"><span class="dot sun"></span>Zon <span class="dot shade"></span>Schaduw <span class="dot filtered"></span>Gefilterd licht <span class="dot tree"></span>Bomen <span class="dot possible"></span>Mogelijke horeca</div>
       </div>
       <div class="panel-links"><p id="tree-status" class="tree-status" role="status" aria-live="polite">Bomen laden…</p><a href="./gebouwkleuren.html">Gebouwkleuren aanpassen</a></div>
-      <p id="building-status" class="building-status" role="status" aria-live="polite">Gebouwtypes laden…</p>
+      <div class="building-status-row"><p id="building-status" class="building-status" role="status" aria-live="polite">Gebouwtypes laden…</p><button id="retry-buildings" type="button" hidden>Opnieuw laden</button></div>
     </section>
 
     <div id="notice" class="notice" role="status"></div>
@@ -127,6 +127,7 @@ const searchBox = requiredElement<HTMLElement>('.search-box');
 const locationButton = requiredElement<HTMLButtonElement>('#my-location');
 const treeStatus = requiredElement<HTMLElement>('#tree-status');
 const buildingStatus = requiredElement<HTMLElement>('#building-status');
+const retryBuildings = requiredElement<HTMLButtonElement>('#retry-buildings');
 
 let terraces: TerraceFeature[] = [];
 let trees: TreeFeature[] = [];
@@ -283,24 +284,33 @@ async function loadTrees(bounds: ViewBounds, zoom: number): Promise<void> {
 async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise<void> {
   buildingTypeRequest?.abort();
   if (zoom < 14) {
+    terraceMap.setBuildings(null);
     buildingStatus.textContent = 'Zoom in voor gebouwkleuren per type.';
+    retryBuildings.hidden = true;
     return;
   }
   buildingStatus.textContent = 'Gebouwtypes laden…';
+  retryBuildings.hidden = true;
   const request = new AbortController();
   buildingTypeRequest = request;
-  try {
-    const result = await fetchBuildings(bounds, request.signal);
+  const apply = (data: BuildingData, loading: boolean) => {
     if (request.signal.aborted) return;
-    terraceMap.setBuildings(result.capped ? null : result.buildings);
-    const typed = result.buildings.filter((building) => !['yes', 'unknown', 'undefined', 'unclassified', 'unidentified', 'other', 'true', 'maybe', 'fixme', 'Y'].includes(building.properties.buildingType)).length;
-    buildingStatus.textContent = result.capped
-      ? 'Veel gebouwen in beeld. Zoom verder in voor kleuren per type.'
-      : `${result.buildings.length} gebouwen geladen · ${typed} met een specifiek type.`;
+    if (data.buildings.length) terraceMap.setBuildings(data.buildings);
+    const typed = data.buildings.filter((building) => !['yes', 'unknown', 'undefined', 'unclassified', 'unidentified', 'other', 'true', 'maybe', 'fixme', 'Y'].includes(building.properties.buildingType)).length;
+    const detail = `${data.buildings.length} gebouwen · ${typed} met een specifiek type`;
+    buildingStatus.textContent = loading
+      ? `${detail} · laden ${data.loadedAreas}/${data.totalAreas} gebieden…`
+      : `${detail}${data.failedAreas ? ' · deels geladen; overige gebouwen zijn neutraal.' : data.capped ? ' · zoom verder in voor de overige gebieden.' : ' · geladen.'}`;
+    retryBuildings.hidden = loading || data.failedAreas === 0;
+  };
+  try {
+    const result = await fetchBuildings(bounds, request.signal, (data) => apply(data, true));
+    if (request.signal.aborted) return;
+    apply(result, false);
   } catch (error) {
     if (request.signal.aborted) return;
-    terraceMap.setBuildings(null);
-    buildingStatus.textContent = 'Gebouwdata niet beschikbaar. Verplaats de kaart om opnieuw te proberen.';
+    buildingStatus.textContent = 'Nieuwe gebouwtypes konden niet laden. Bestaande kleuren blijven behouden.';
+    retryBuildings.hidden = false;
     console.error('Gebouwtypes laden mislukt', error);
   }
 }
@@ -361,6 +371,11 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     }
     showNotice('Een deel van de kaarttegels kon niet laden. Probeer opnieuw te bewegen of in te zoomen.');
   },
+});
+
+retryBuildings.addEventListener('click', () => {
+  const bounds = terraceMap.map.getBounds();
+  void loadBuildingCategories({ south: bounds.getSouth(), west: bounds.getWest(), north: bounds.getNorth(), east: bounds.getEast() }, terraceMap.map.getZoom());
 });
 
 window.addEventListener('storage', (event) => {

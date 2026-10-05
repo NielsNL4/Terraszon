@@ -10,7 +10,7 @@ import type {
 } from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
 import { BuildingShadowLayer } from './shadow-layer';
-import { withTileHeights } from './building-types';
+import { buildingBox, mergeBuildingGeometry, withTileHeights } from './building-types';
 import { loadPalette, UNKNOWN_BUILDING_COLOR } from './building-palette';
 import { treeMarkers } from './trees';
 import { InstancedTreeLayer } from './tree-layer';
@@ -146,6 +146,8 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   let treeLayer: InstancedTreeLayer | null = null;
   let treeDate = '';
   let buildingData: CategorizedBuilding[] | null = null;
+  let buildingRevision = 0;
+  let appliedBuildingGeometry = '';
   let onlySunny = false;
   let sunState = { altitude: 0, azimuth: 0, daylight: false };
   const visibility = { buildings: true, shadows: true, terraces: true, trees: true };
@@ -167,6 +169,39 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       map.setLayoutProperty(COLORED_BUILDING_LAYER, 'visibility', buildingData === null ? 'none' : 'visible');
       map.setPaintProperty(COLORED_BUILDING_LAYER, 'fill-extrusion-opacity', visibility.buildings ? 0.92 : 0);
     }
+  };
+
+  const refreshBuildingGeometry = () => {
+    if (!ready || !buildingData || map.getZoom() < 14) return;
+    const bounds = getBounds(map);
+    const intersects = (geometry: Polygon | MultiPolygon) => {
+      const box = buildingBox(geometry);
+      return box.east >= bounds.west && box.west <= bounds.east && box.north >= bounds.south && box.south <= bounds.north;
+    };
+    const tiles = map.queryRenderedFeatures({ layers: [BUILDING_LAYER] })
+      .filter((feature) => feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
+      .map((feature) => ({ geometry: feature.geometry as Polygon | MultiPolygon, properties: feature.properties }));
+    const fallback = new Map<string, CategorizedBuilding>();
+    for (const tile of tiles) {
+      const polygons = tile.geometry.type === 'Polygon' ? [tile.geometry.coordinates] : tile.geometry.coordinates;
+      for (const coordinates of polygons) {
+        const geometry: Polygon = { type: 'Polygon', coordinates };
+        if (!intersects(geometry)) continue;
+        const height = buildingHeight(tile.properties);
+        const minHeight = Number(tile.properties?.render_min_height) || 0;
+        const id = `tile:${height}:${minHeight}:${geometryFingerprint(geometry)}`;
+        if (fallback.has(id)) continue;
+        fallback.set(id, { type: 'Feature', id, geometry,
+          properties: { id, height, minHeight, hasHeight: true, buildingType: 'yes', isPart: false } });
+      }
+    }
+    const fingerprint = `${buildingRevision}:${[...fallback.keys()].sort().join('|')}`;
+    if (fingerprint === appliedBuildingGeometry) return;
+    appliedBuildingGeometry = fingerprint;
+    const known = withTileHeights(buildingData.filter((building) => intersects(building.geometry)), tiles);
+    const source = map.getSource(COLORED_BUILDING_SOURCE) as GeoJSONSource | undefined;
+    source?.setData({ type: 'FeatureCollection', features: mergeBuildingGeometry(known, [...fallback.values()]) });
+    updateBuildingVisibility();
   };
 
   const styleLandscape = () => {
@@ -431,13 +466,12 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   });
 
   // `idle` is the first point at which all visible vector tiles have settled.
-  map.on('idle', extractBuildings);
+  map.on('idle', () => { refreshBuildingGeometry(); extractBuildings(); });
   map.on('moveend', () => {
     // Keep the previous complete snapshot while the new tiles are loading.
     buildingFingerprint = '';
-    // Until the next area has loaded, show complete neutral tile buildings.
-    buildingData = null;
-    updateBuildingVisibility();
+    // Keep known colors while new areas load; tile footprints fill the rest.
+    appliedBuildingGeometry = '';
     callbacks.onViewChange(getBounds(map), map.getZoom());
   });
   map.on('webglcontextlost', () => {
@@ -454,6 +488,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       updateBuildingVisibility();
       const buildingSource = map.getSource(COLORED_BUILDING_SOURCE) as GeoJSONSource | undefined;
       buildingSource?.setData({ type: 'FeatureCollection', features: buildingData ?? [] });
+      appliedBuildingGeometry = '';
       const terraceSource = map.getSource(TERRACE_SOURCE) as GeoJSONSource | undefined;
       terraceSource?.setData({ type: 'FeatureCollection', features: terraceData });
       const treeSource = map.getSource(TREE_SOURCE) as GeoJSONSource | undefined;
@@ -531,15 +566,12 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       treeLayer?.setDate(date);
     },
     setBuildings(buildings) {
-      const tiles = ready ? map.queryRenderedFeatures({ layers: [BUILDING_LAYER] })
-        .filter((feature) => feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')
-        .map((feature) => ({ geometry: feature.geometry as Polygon | MultiPolygon, properties: feature.properties })) : [];
-      buildingData = buildings?.length ? withTileHeights(buildings, tiles) : null;
+      buildingData = buildings?.length ? buildings : null;
+      buildingRevision++;
       buildingFingerprint = '';
       if (!ready) return;
-      const source = map.getSource(COLORED_BUILDING_SOURCE) as GeoJSONSource | undefined;
-      source?.setData({ type: 'FeatureCollection', features: buildingData ?? [] });
-      updateBuildingVisibility();
+      if (buildingData) refreshBuildingGeometry();
+      else updateBuildingVisibility();
       // `idle` will extract the new rendered layer for the shadow worker.
     },
     refreshBuildingPalette() {
