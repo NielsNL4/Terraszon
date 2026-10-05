@@ -6,6 +6,7 @@ import type {
   GeoJSONFeature,
   GeoJSONSource,
   MapMouseEvent,
+  Marker,
   Map as MapLibreMap,
 } from 'maplibre-gl';
 import type { FeatureCollection, MultiPolygon, Polygon } from 'geojson';
@@ -60,6 +61,7 @@ export type TerraceMap = {
   setTerraces: (terraces: TerraceFeature[]) => void;
   setTrees: (trees: TreeFeature[]) => void;
   setTreeDate: (date: string) => void;
+  setUserLocation: (coordinates: [number, number] | null) => void;
   setBuildings: (buildings: CategorizedBuilding[] | null) => void;
   refreshBuildingPalette: () => void;
   setOnlySunny: (enabled: boolean) => void;
@@ -145,6 +147,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   let treeData: TreeFeature[] = [];
   let treeLayer: InstancedTreeLayer | null = null;
   let treeDate = '';
+  let userLocationMarker: Marker | null = null;
   let buildingData: CategorizedBuilding[] | null = null;
   let buildingRevision = 0;
   let appliedBuildingGeometry = '';
@@ -538,6 +541,21 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
 
   return {
     map,
+    setUserLocation(coordinates) {
+      if (!coordinates) {
+        userLocationMarker?.remove();
+        userLocationMarker = null;
+        return;
+      }
+      if (!userLocationMarker) {
+        const element = document.createElement('div');
+        element.className = 'user-location';
+        element.setAttribute('role', 'img');
+        element.setAttribute('aria-label', 'Je locatie');
+        userLocationMarker = new maplibregl.Marker({ element, anchor: 'center', pitchAlignment: 'viewport' })
+          .setLngLat(coordinates).addTo(map);
+      } else userLocationMarker.setLngLat(coordinates);
+    },
     setShadowMesh(mesh) {
       shadowMesh = mesh;
       shadowLayer?.setMesh(mesh);

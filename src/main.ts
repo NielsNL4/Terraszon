@@ -4,12 +4,14 @@ import { createTerraceMap, type ViewBounds } from './map';
 import { fetchBuildings, type BuildingData } from './building-loader';
 import { PALETTE_STORAGE_KEY } from './building-palette';
 import { searchPlaces, type SearchResult } from './search';
+import { createLocationTracker } from './location';
 import type { ShadowWorkerRequest, ShadowWorkerResponse } from './shadow-protocol';
 import {
   dateAtMinutes,
   formatClock,
   formatMinutes,
   getSunState,
+  timelineEventPosition,
 } from './sun';
 import { applyTerraceStatuses, fetchTerraces } from './terraces';
 import { fetchTrees } from './trees';
@@ -25,6 +27,7 @@ const localDate = [
   String(now.getDate()).padStart(2, '0'),
 ].join('-');
 const currentMinutes = now.getHours() * 60 + Math.floor(now.getMinutes() / 5) * 5;
+const solarEventIcon = (rising: boolean) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M5 21h14M7 15a5 5 0 0 1 10 0M3 12l2 1m14 0 2-1"/><path d="${rising ? 'M12 10V3m-3 3 3-3 3 3' : 'M12 3v7m-3-3 3 3 3-3'}"/></svg>`;
 
 app.innerHTML = `
   <main class="shell">
@@ -75,15 +78,21 @@ app.innerHTML = `
           <input id="date" type="date" value="${localDate}" />
         </label>
         <div class="sun-window">
-          <span><i class="rise-icon"></i><b id="sunrise">--:--</b></span>
-          <span><i class="set-icon"></i><b id="sunset">--:--</b></span>
+          <span class="sunrise-summary" aria-label="Zonsopkomst"><span class="rise-icon">${solarEventIcon(true)}</span><b id="sunrise">--:--</b></span>
+          <span class="sunset-summary" aria-label="Zonsondergang"><span class="set-icon">${solarEventIcon(false)}</span><b id="sunset">--:--</b></span>
         </div>
       </div>
 
       <label class="slider-label" for="time">
         <span>00:00</span><span>Tijdstip</span><span>23:55</span>
       </label>
-      <input id="time" class="time-slider" type="range" min="0" max="1435" step="5" value="${currentMinutes}" />
+      <div class="timeline">
+        <input id="time" class="time-slider" type="range" min="0" max="1435" step="5" value="${currentMinutes}" />
+        <div class="timeline-events">
+          <span id="sunrise-event" class="sun-event sunrise-event" role="img" hidden>${solarEventIcon(true)}<span></span></span>
+          <span id="sunset-event" class="sun-event sunset-event" role="img" hidden>${solarEventIcon(false)}<span></span></span>
+        </div>
+      </div>
 
       <div class="panel-footer">
         <div class="toggles" aria-label="Kaartlagen">
@@ -128,6 +137,51 @@ const locationButton = requiredElement<HTMLButtonElement>('#my-location');
 const treeStatus = requiredElement<HTMLElement>('#tree-status');
 const buildingStatus = requiredElement<HTMLElement>('#building-status');
 const retryBuildings = requiredElement<HTMLButtonElement>('#retry-buildings');
+const sunriseEvent = requiredElement<HTMLElement>('#sunrise-event');
+const sunsetEvent = requiredElement<HTMLElement>('#sunset-event');
+const controlPanel = requiredElement<HTMLElement>('.control-panel');
+const mapActions = requiredElement<HTMLElement>('.map-actions');
+const solarCard = requiredElement<HTMLElement>('.solar-card');
+const shell = requiredElement<HTMLElement>('.shell');
+const mobileLayout = window.matchMedia('(max-width: 680px), (max-height: 500px) and (pointer: coarse)');
+const bottomControls = document.createElement('div');
+bottomControls.className = 'bottom-controls';
+shell.append(bottomControls);
+
+function updateViewportLayout(): void {
+  const viewport = window.visualViewport;
+  const height = viewport?.height ?? window.innerHeight;
+  const keyboard = Math.max(0, window.innerHeight - height - (viewport?.offsetTop ?? 0));
+  shell.style.setProperty('--visible-height', `${height}px`);
+  shell.style.setProperty('--keyboard-offset', `${keyboard}px`);
+  shell.style.setProperty('--bottom-controls-height', `${bottomControls.getBoundingClientRect().height}px`);
+}
+
+function arrangeControls(): void {
+  const focused = document.activeElement as HTMLElement | null;
+  if (mobileLayout.matches) bottomControls.append(controlPanel, mapActions);
+  else { solarCard.before(mapActions); notice.before(controlPanel); }
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+  updateViewportLayout();
+}
+
+mobileLayout.addEventListener('change', arrangeControls);
+window.visualViewport?.addEventListener('resize', updateViewportLayout);
+window.visualViewport?.addEventListener('scroll', updateViewportLayout);
+window.addEventListener('resize', updateViewportLayout);
+const controlsObserver = new ResizeObserver(updateViewportLayout);
+controlsObserver.observe(bottomControls);
+arrangeControls();
+
+function mapTargetOffset(): [number, number] {
+  if (!mobileLayout.matches) return [0, 0];
+  const map = requiredElement<HTMLElement>('#map').getBoundingClientRect();
+  const centerX = map.left + map.width / 2;
+  const header = solarCard.getBoundingClientRect();
+  const top = (centerX >= header.left && centerX <= header.right ? Math.max(0, header.bottom - map.top) : 0) + 12;
+  const bottom = bottomControls.getBoundingClientRect().top - map.top - 12;
+  return [0, (top + Math.max(top, bottom)) / 2 - map.height / 2];
+}
 
 let terraces: TerraceFeature[] = [];
 let trees: TreeFeature[] = [];
@@ -147,7 +201,6 @@ let searchRequest: AbortController | null = null;
 let searchVersion = 0;
 let searchMatches: SearchResult[] = [];
 let activeSearchIndex = -1;
-let locationRequestId = 0;
 let initialLocationAllowed = true;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 
@@ -207,6 +260,19 @@ function renderSolarState(classifyTerraceStatus = false): void {
   dayState.classList.toggle('night', !sun.isDaylight);
   sunrise.textContent = formatClock(sun.sunrise);
   sunset.textContent = formatClock(sun.sunset);
+  timeInput.setAttribute('aria-valuetext', formatMinutes(minutes));
+  timeInput.style.setProperty('--time-progress', `${minutes / Number(timeInput.max) * 100}%`);
+  for (const [element, date, label] of [[sunriseEvent, sun.sunrise, 'Zonsopkomst'], [sunsetEvent, sun.sunset, 'Zonsondergang']] as const) {
+    const position = timelineEventPosition(date, Number(timeInput.max));
+    element.hidden = position === null;
+    if (position === null) continue;
+    element.style.left = `${position}%`;
+    element.querySelector('span')!.textContent = formatClock(date);
+    element.setAttribute('aria-label', `${label} om ${formatClock(date)}`);
+    element.title = `${label} om ${formatClock(date)}`;
+  }
+  sunrise.closest('.sunrise-summary')!.setAttribute('aria-label', `Zonsopkomst ${formatClock(sun.sunrise)}`);
+  sunset.closest('.sunset-summary')!.setAttribute('aria-label', `Zonsondergang ${formatClock(sun.sunset)}`);
 }
 
 function scheduleSolarRender(classifyTerraceStatus = false): void {
@@ -418,7 +484,8 @@ function selectSearchResult(result: SearchResult): void {
   window.clearTimeout(searchTimer);
   searchMatches = [];
   closeSearch();
-  terraceMap.map.flyTo({ center: result.coordinates, zoom: result.kind === 'place' ? 14 : 16, essential: true });
+  searchInput.blur();
+  terraceMap.map.flyTo({ center: result.coordinates, zoom: result.kind === 'place' ? 14 : 16, offset: mapTargetOffset(), essential: true });
 }
 
 function renderSearchResults(): void {
@@ -506,44 +573,46 @@ document.addEventListener('pointerdown', (event) => {
   }
 });
 
+const locationTracker = navigator.geolocation && window.isSecureContext ? createLocationTracker(navigator.geolocation, {
+  onPosition(position) {
+    terraceMap.setUserLocation([position.coords.longitude, position.coords.latitude]);
+  },
+  onCenter(position, initial) {
+    if ((initial && !initialLocationAllowed) || document.visibilityState === 'hidden') return;
+    terraceMap.map.flyTo({ center: [position.coords.longitude, position.coords.latitude], zoom: 15.5,
+      offset: mapTargetOffset(), essential: true });
+  },
+  onBusy(busy) {
+    locationButton.disabled = busy;
+    locationButton.classList.toggle('locating', busy);
+    locationButton.setAttribute('aria-label', busy ? 'Locatie bepalen…' : 'Ga naar mijn locatie');
+  },
+  onError(error, initial) {
+    if (error.code === 1) terraceMap.setUserLocation(null);
+    if (initial && !initialLocationAllowed) return;
+    showNotice(error.code === 1
+      ? 'Locatietoegang geweigerd. Zoek een plaats of probeer de locatieknop opnieuw.'
+      : initial ? 'Locatie niet gevonden. De kaart opent in Groningen.'
+        : 'Locatie niet gevonden. Probeer het opnieuw.');
+  },
+}) : null;
+
 function locateUser(initial = false): void {
-  const requestId = ++locationRequestId;
-  if (!navigator.geolocation || !window.isSecureContext) {
+  if (!locationTracker) {
     if (!initial) showNotice('Locatie is alleen beschikbaar via HTTPS of localhost.');
     else showNotice('Locatie niet beschikbaar. De kaart opent in Groningen.');
     return;
   }
 
-  locationButton.disabled = true;
-  locationButton.classList.add('locating');
-  locationButton.setAttribute('aria-label', 'Locatie bepalen…');
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      if (requestId !== locationRequestId) return;
-      locationButton.disabled = false;
-      locationButton.classList.remove('locating');
-      locationButton.setAttribute('aria-label', 'Ga naar mijn locatie');
-      if (initial && !initialLocationAllowed) return;
-      terraceMap.map.flyTo({
-        center: [position.coords.longitude, position.coords.latitude],
-        zoom: 15.5,
-        essential: true,
-      });
-    },
-    (error) => {
-      if (requestId !== locationRequestId) return;
-      locationButton.disabled = false;
-      locationButton.classList.remove('locating');
-      locationButton.setAttribute('aria-label', 'Ga naar mijn locatie');
-      if (initial && !initialLocationAllowed) return;
-      showNotice(error.code === 1
-        ? 'Locatietoegang geweigerd. Zoek een plaats of probeer de locatieknop opnieuw.'
-        : initial ? 'Locatie niet gevonden. De kaart opent in Groningen.'
-          : 'Locatie niet gevonden. Probeer het opnieuw.');
-    },
-    { enableHighAccuracy: false, timeout: 8_000, maximumAge: 60_000 },
-  );
+  locationTracker.locate(initial);
 }
+
+window.addEventListener('pagehide', () => locationTracker?.stop());
+window.addEventListener('pageshow', (event) => { if (event.persisted) locationTracker?.resume(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') locationTracker?.pause();
+  else locationTracker?.resume();
+});
 
 terraceMap.map.on('movestart', (event) => {
   if (event.originalEvent) initialLocationAllowed = false;

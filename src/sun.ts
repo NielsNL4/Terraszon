@@ -10,7 +10,9 @@ export function dateAtMinutes(dateValue: string, minutes: number): Date {
 
 export function getSunState(date: Date, latitude: number, longitude: number): SunState {
   const position = SunCalc.getPosition(date, latitude, longitude);
-  const times = SunCalc.getTimes(date, latitude, longitude);
+  const day = new Date(date);
+  day.setHours(12, 0, 0, 0);
+  const times = SunCalc.getTimes(day, latitude, longitude);
   const altitude = position.altitude;
 
   return {
@@ -20,6 +22,12 @@ export function getSunState(date: Date, latitude: number, longitude: number): Su
     sunset: times.sunset,
     isDaylight: altitude > 0,
   };
+}
+
+export function timelineEventPosition(date: Date | null, maximum = 1435): number | null {
+  if (!date || !Number.isFinite(date.getTime()) || !Number.isFinite(maximum) || maximum <= 0) return null;
+  const minutes = date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+  return Math.max(0, Math.min(100, minutes / maximum * 100));
 }
 
 export function formatClock(date: Date | null): string {
