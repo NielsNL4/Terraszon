@@ -68,6 +68,7 @@ export type TerraceMap = {
   setTrees: (trees: TreeFeature[]) => void;
   setTreeDate: (date: string) => void;
   setUserLocation: (coordinates: [number, number] | null) => void;
+  setSelectedPlace: (coordinates: [number, number] | null) => void;
   setBuildings: (buildings: CategorizedBuilding[] | null) => void;
   loadBuildings: (bounds: ViewBounds, mobile: boolean, signal: AbortSignal, progress: (data: BuildingSummary) => void) => Promise<BuildingSummary>;
   refreshBuildingPalette: () => void;
@@ -156,6 +157,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   let treeLayer: InstancedTreeLayer | null = null;
   let treeDate = '';
   let userLocationMarker: Marker | null = null;
+  let selectedPlaceMarker: Marker | null = null;
   let knownBuildings = false;
   let buildingSourceActive = false;
   let geometryDirty = false;
@@ -173,7 +175,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       map.triggerRepaint();
     }
   });
-  map.on('remove', () => buildingClient.destroy());
+  map.on('remove', () => { buildingClient.destroy(); selectedPlaceMarker?.remove(); userLocationMarker?.remove(); });
   let onlySunny = false;
   let sunState = { altitude: 0, azimuth: 0, daylight: false };
   const visibility = { buildings: true, shadows: true, terraces: true, trees: true };
@@ -416,7 +418,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       if (!feature || feature.geometry.type !== 'Point') return;
       const properties = feature.properties;
       const selected = terraceData.find(terrace => terrace.properties.id === properties.id);
-      if (selected) callbacks.onPlaceSelect?.(terracePlace(selected));
+      if (selected && callbacks.onPlaceSelect) { callbacks.onPlaceSelect(terracePlace(selected)); return; }
       const status = properties.status === 'sun'
         ? 'In de zon'
         : properties.status === 'filtered' ? 'Mogelijke boomschaduw / gefilterd licht'
@@ -577,6 +579,15 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
 
   return {
     map,
+    setSelectedPlace(coordinates) {
+      if (!coordinates) { selectedPlaceMarker?.remove(); selectedPlaceMarker = null; return; }
+      if (!selectedPlaceMarker) {
+        const element = document.createElement('div'); element.className = 'selected-place-marker';
+        element.setAttribute('role', 'img'); element.setAttribute('aria-label', 'Geselecteerde locatie');
+        selectedPlaceMarker = new maplibregl.Marker({ element, anchor: 'center', pitchAlignment: 'map' })
+          .setLngLat(coordinates).addTo(map);
+      } else selectedPlaceMarker.setLngLat(coordinates);
+    },
     setUserLocation(coordinates) {
       if (!coordinates) {
         userLocationMarker?.remove();

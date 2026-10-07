@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-07T00:00:00Z",
+  "title": "Design System: Terraszon",
+  "extensions": {
+    "colorMeta": {
+      "sun-mark": { "role": "primary", "displayName": "Terraszon sun mark" },
+      "time-accent": { "role": "primary", "displayName": "Timeline and loading accent" },
+      "sun-status": { "role": "primary", "displayName": "Direct sun status" },
+      "map-card": { "role": "neutral", "displayName": "Translucent map overlay" },
+      "panel": { "role": "neutral", "displayName": "Opaque discovery cream" },
+      "filtered-status": { "role": "secondary", "displayName": "Possibly filtered light" },
+      "shade-status": { "role": "secondary", "displayName": "Shade and night status" }
+    },
+    "typographyMeta": {
+      "wordmark": { "displayName": "Wordmark", "purpose": "src/styles.css: :root supplies the Inter/system-sans fallback stack; .wordmark supplies size, weight and tracking. No font loading is established." },
+      "title": { "displayName": "Panel heading", "purpose": "src/place-panel.css: .place-panel-header h2; three-line clamp and wrapping." },
+      "row-title": { "displayName": "Venue name", "purpose": "src/place-panel.css: .place-row-name; two-line clamp and wrapping." },
+      "body": { "displayName": "Detail body", "purpose": "src/place-panel.css: .place-address, .place-facts dd, .place-message p; not a global body reset." },
+      "note": { "displayName": "Explanatory note", "purpose": "src/place-panel.css: .place-estimate, .place-data-note." },
+      "label": { "displayName": "Metadata and status", "purpose": "src/place-panel.css: .place-row-meta, .place-status, .place-panel-context. Context and distance use tabular numerals." },
+      "action": { "displayName": "Detail action", "purpose": "src/place-panel.css: .place-action." },
+      "time": { "displayName": "Solar time", "purpose": "src/styles.css: .solar-card strong; tabular numerals, 21px in compact layout." }
+    },
+    "shadows": [
+      { "name": "map-overlay", "value": "0 12px 38px rgb(43 40 31 / 12%)", "purpose": "src/styles.css: .map-card; border and backdrop-filter: blur(18px) accompany this shadow." },
+      { "name": "discovery", "value": "0 12px 38px rgb(43 40 31 / 16%)", "purpose": "src/place-panel.css: .place-panel; opaque cream sidebar/sheet." },
+      { "name": "address-results", "value": "0 12px 30px rgb(43 40 31 / 16%)", "purpose": "src/styles.css: .search-results." },
+      { "name": "notice", "value": "0 8px 25px rgb(30 34 30 / 20%)", "purpose": "src/styles.css: .notice." },
+      { "name": "selected-marker", "value": "0 2px 8px rgb(35 53 36 / 25%), inset 0 0 0 3px #fffdf7", "purpose": "src/place-panel.css: .selected-place-marker; 30px circle with 2px #365744 border." }
+    ],
+    "motion": [
+      { "name": "loading-fade", "value": "opacity .35s ease, visibility .35s ease", "purpose": "src/styles.css: .loading-screen transition." },
+      { "name": "loading-progress", "value": "loading-slide 1.25s ease-in-out infinite", "purpose": "src/styles.css: .loading-progress span; keyframes translateX(-110%) to translateX(290%)." },
+      { "name": "locating-pulse", "value": "location-pulse 1s ease-in-out infinite alternate", "purpose": "src/styles.css: .location-button.locating svg; keyframe opacity .4." },
+      { "name": "toggle-state", "value": ".18s ease", "purpose": "src/styles.css: .toggles span transition." },
+      { "name": "notice-state", "value": ".2s ease", "purpose": "src/styles.css: .notice transition; visible state changes opacity and translateY." },
+      { "name": "reduced-motion", "value": "(prefers-reduced-motion: reduce)", "purpose": "src/styles.css: universal transition:none!important, animation:none!important, scroll-behavior:auto!important. Discovery has no opening animation." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "(max-width: 680px), (max-height: 500px) and (pointer: coarse)" },
+      { "name": "short-narrow-open", "value": "(max-width: 680px) and (max-height: 540px)" },
+      { "name": "coarse-landscape-open", "value": "(min-width: 681px) and (max-height: 500px) and (pointer: coarse)" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Ontdek trigger",
+      "kind": "button",
+      "refersTo": "discover-button",
+      "description": "src/main.ts #discover-places; src/place-panel.css .discover-button; src/styles.css .map-card. Initially aria-expanded=false. Static preview; compact mode hides the visible word and sets width 46px.",
+      "html": "<button class=\"ds-discover\" type=\"button\" aria-label=\"Ontdek locaties in dit kaartgebied\" aria-expanded=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M8 6h13M8 12h13M8 18h13M3 6h1m-1 6h1m-1 6h1\"/></svg><span>Ontdek</span></button>",
+      "css": ".ds-discover{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:46px;padding:0 12px;border:1px solid rgb(36 39 34 / 10%);border-radius:12px;color:#30322e;background:rgb(255 253 247 / 92%);box-shadow:0 12px 38px rgb(43 40 31 / 12%);backdrop-filter:blur(18px);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;font-weight:700;cursor:pointer}.ds-discover svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}.ds-discover:hover,.ds-discover[aria-expanded=true]{background:#f2ede0}.ds-discover:focus-visible{outline:2px solid #ba8100;outline-offset:2px}"
+    },
+    {
+      "name": "Back icon button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "src/place-panel.ts back icon; src/place-panel.css .place-icon-button and panel focus rule. Compact size is 44px; desktop preview is 40px.",
+      "html": "<button class=\"ds-icon\" type=\"button\" aria-label=\"Terug naar locaties\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m10 5-7 7 7 7M3 12h18\"/></svg></button>",
+      "css": ".ds-icon{display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:9px;color:#454e43;background:transparent;cursor:pointer}.ds-icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}.ds-icon:hover{background:#f2ede0}.ds-icon:active{background:#e5e9dd}.ds-icon:focus-visible{outline:2px solid #ba8100;outline-offset:-2px}"
+    },
+    {
+      "name": "Detail or recovery action",
+      "kind": "button",
+      "refersTo": "place-action",
+      "description": "src/place-panel.css .place-action, hover/active and panel focus selectors. Used for map, route, source and recovery actions; no distinct filled primary button. Minimum height rises to 44px in compact mode.",
+      "html": "<button class=\"ds-action\" type=\"button\">Toon op kaart</button>",
+      "css": ".ds-action{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;border:1px solid #d1d7c9;border-radius:8px;color:#365744;background:#fffdf7;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;font-weight:650;line-height:1.3;text-decoration:none;text-align:center;cursor:pointer}.ds-action:hover{background:#eff2e9}.ds-action:active{background:#e5e9dd}.ds-action:focus-visible{outline:2px solid #ba8100;outline-offset:-2px}"
+    },
+    {
+      "name": "Local discovery search",
+      "kind": "input",
+      "refersTo": "local-query",
+      "description": "src/place-panel.ts #venue-query; src/place-panel.css .place-query-row and input. Searches loaded venues within map bounds, not a global venue catalogue. Compact font 16px; keyboard-mode input height 38px.",
+      "html": "<div class=\"ds-query\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M16 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0Zm-2 5 6 6\"/></svg><input type=\"search\" aria-label=\"Zoek in geladen locaties in dit kaartgebied\" placeholder=\"Naam in dit kaartgebied\" autocomplete=\"off\" /></div>",
+      "css": ".ds-query{display:flex;align-items:center;gap:9px;padding:0 10px;border:1px solid #dedbd2;border-radius:8px;color:#62665f;background:#fffefb}.ds-query svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}.ds-query input{width:100%;min-width:0;height:42px;padding:0;border:0;outline:0!important;background:transparent;color:#20231f;caret-color:#926000;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px}.ds-query input::placeholder{color:#62665f;opacity:1}.ds-query:focus-within{outline:2px solid #ba8100;outline-offset:1px}.ds-query ::selection{color:#20231f;background:#f5d681}"
+    },
+    {
+      "name": "Map-layer chip",
+      "kind": "chip",
+      "refersTo": "layer-chip",
+      "description": "src/styles.css .toggles label/input/span, checked and focus selectors. Native checkbox drives state; unchecked/checked preview. Alleen zon uses a separate warm checked variant in source.",
+      "html": "<label class=\"ds-toggle\"><input type=\"checkbox\" checked /><span>Schaduw</span></label>",
+      "css": ".ds-toggle{cursor:pointer}.ds-toggle input{position:absolute;opacity:0;pointer-events:none}.ds-toggle span{display:inline-block;padding:5px 9px;border:1px solid #dedbd2;border-radius:999px;color:#71736c;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10px;font-weight:650;transition:.18s ease}.ds-toggle input:checked+span{border-color:#373a35;color:#fffdf7;background:#373a35}.ds-toggle input:focus-visible+span{outline:2px solid #d79800;outline-offset:2px}@media(prefers-reduced-motion:reduce){.ds-toggle span{transition:none!important}}"
+    },
+    {
+      "name": "Discovery row",
+      "kind": "nav",
+      "refersTo": "place-row",
+      "description": "src/place-panel.ts row construction; src/place-panel.css .place-row, .place-row-main, name/meta/distance/status. Preview uses generic descriptive content rather than a fixture venue; source rows navigate to details with no individual card elevation.",
+      "html": "<button class=\"ds-row\" type=\"button\"><span class=\"ds-row-main\"><strong class=\"ds-row-name\">Horecalocatie</strong><span class=\"ds-row-meta\">Horecalocatie · Terras niet bevestigd</span><span class=\"ds-row-status\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 11v6m0-10v1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z\"/></svg>Zonstatus niet beschikbaar</span></span><span class=\"ds-distance\" aria-label=\"240 m hemelsbreed\">240 m</span></button>",
+      "css": ".ds-row{display:flex;align-items:flex-start;gap:10px;width:100%;padding:13px 16px;border:0;color:#20231f;background:transparent;text-align:left;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer}.ds-row-main{display:grid;flex:1;min-width:0;gap:5px}.ds-row-name{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere;font-size:14px;font-weight:650;line-height:1.4}.ds-row-meta{color:#62665f;font-size:11px;line-height:1.4}.ds-distance{flex:none;margin-top:2px;color:#555e52;font-size:11px;font-variant-numeric:tabular-nums}.ds-row-status{display:inline-flex;align-items:center;gap:5px;color:#555e52;font-size:11px;line-height:1.4}.ds-row-status svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}.ds-row:hover{background:#f2ede0}.ds-row:active{background:#e5e9dd}.ds-row:focus-visible{outline:2px solid #ba8100;outline-offset:-2px}"
+    },
+    {
+      "name": "Sun status",
+      "kind": "custom",
+      "refersTo": "sun-status",
+      "description": "src/place-panel.ts statusIcons.sun and statusNode; src/place-panel.css .place-status.sun. Noninteractive status has no hover/focus state. Filtered, shade, night, pending and unavailable have distinct icons and words.",
+      "html": "<span class=\"ds-status\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1\"/></svg><span>In de zon</span></span>",
+      "css": ".ds-status{display:inline-flex;align-items:center;gap:5px;width:fit-content;color:#926000;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:11px;line-height:1.4}.ds-status svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}"
+    },
+    {
+      "name": "Discovery container",
+      "kind": "card",
+      "refersTo": "place-panel",
+      "description": "src/place-panel.css .place-panel, header and body; src/place-panel.ts close/title markup. Isolated open-container preview, not startup state or runtime navigation. Actual sidebar/sheet geometry is documented in DESIGN.md Layout.",
+      "html": "<aside class=\"ds-panel\" aria-labelledby=\"ds-panel-title\"><header class=\"ds-panel-header\"><h2 id=\"ds-panel-title\" tabindex=\"-1\">Ontdek</h2><button class=\"ds-panel-close\" type=\"button\" aria-label=\"Sluit locaties\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m6 6 12 12M18 6 6 18\"/></svg></button></header><div class=\"ds-panel-body\"><p class=\"ds-panel-note\">Je zoekt alleen in geladen locaties in dit kaartgebied.</p></div></aside>",
+      "css": ".ds-panel{display:flex;flex-direction:column;overflow:hidden;width:min(352px,100%);border:1px solid #dedbd2;border-radius:15px;background:#fffdf7;box-shadow:0 12px 38px rgb(43 40 31 / 16%);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-panel-header{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 18px;border-bottom:1px solid #e6e2d9}.ds-panel-header h2{flex:1;min-width:0;margin:0;color:#20231f;font-size:16px;font-weight:750;line-height:1.35;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.ds-panel-header h2:focus{outline:none}.ds-panel-header h2:focus-visible{outline:2px solid #ba8100;outline-offset:2px;border-radius:3px}.ds-panel-close{display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:9px;color:#454e43;background:transparent;cursor:pointer}.ds-panel-close svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}.ds-panel-close:hover{background:#f2ede0}.ds-panel-close:active{background:#e5e9dd}.ds-panel-close:focus-visible{outline:2px solid #ba8100;outline-offset:-2px}.ds-panel-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 14px 16px;scrollbar-width:thin;scrollbar-color:#abae9f #fffdf7}.ds-panel-note{color:#62665f;font-size:13px;line-height:1.5}"
+    }
+  ],
+  "narrative": {
+    "northStar": "",
+    "overview": "This documents the coherent, existing Terraszon map interface and the completed F1 discovery extension. The implementation is the visual authority; no new creative direction or metaphor is selected. The Terraszon name, sun mark and Dutch controls are preserved, as required by `PRODUCT.md` and `.impeccable/surfaces/src-main-ts.md`.\n\nThe map fills the viewport. Cream overlays, dark green-grey text, warm sun accents, rounded controls and soft shadows carry the existing identity. Discovery adds a compact list and a shared detail view with separators rather than individually elevated row cards.",
+    "keyCharacteristics": [
+      "Full-viewport map with compact cream overlays.",
+      "System-sans typography, dark green-grey text and warm sun accents.",
+      "Rounded controls, soft overlay shadows and quiet row separators.",
+      "Initially closed, nonmodal discovery with explicit Dutch status and source uncertainty."
+    ],
+    "rules": [],
+    "dos": [
+      "**Do** preserve the Terraszon name, existing sun mark and Dutch controls.",
+      "**Do** use the observed source colors and formats, typography, rounded controls and focus treatments.",
+      "**Do** start discovery closed on desktop and mobile and preserve its nonmodal navigation.",
+      "**Do** keep source evidence, computed light status and uncertain or missing data distinct.",
+      "**Do** use the established sidebar, bottom-sheet and coarse-pointer landscape arrangements."
+    ],
+    "donts": [
+      "**Don't** turn discovery rows into individually elevated decorative cards.",
+      "**Don't** imply guaranteed sun, weather, exact terrace seats or current opening availability from source-pin estimates.",
+      "**Don't** treat synthetic Test* screenshot venues as real content or shipping assets.",
+      "**Don't** describe Inter as loaded or self-hosted, or infer performance or WCAG compliance from this evidence.",
+      "**Don't** invent CSS custom properties or normalize the incumbent colors into a new palette."
+    ]
+  }
+}

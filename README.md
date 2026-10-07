@@ -82,6 +82,16 @@ Boomdata heeft een ruimtelijke buffer rondom het kaartbeeld en een begrensde geh
 
 Zoekopdrachten gaan naar de publieke Photon-server van komoot. Verzoeken worden vertraagd en bij nieuwe invoer geannuleerd om de dienst te ontzien. De server kan verzoeken beperken of tijdelijk onbereikbaar zijn; in dat geval blijft de kaart bruikbaar. Zoekopdrachten worden naar die externe dienst verstuurd; de browserpositie zelf wordt niet voor zoeken verzonden.
 
+## Locaties ontdekken
+
+Het menu begint gesloten op desktop en mobiel. **Ontdek** opent de geladen horecalocaties in het huidige kaartgebied, gesorteerd op hemelsbrede afstand tot je bevestigde locatie of, zonder locatie, het kaartcentrum. De zoekinvoer in dit menu zoekt direct in die geladen namen, adressen en horecatypes. De algemene adres-/plaatszoeker blijft afzonderlijk beschikbaar. De lijst volgt de bestaande schakelaar **Alleen zon**, inclusief mogelijk gefilterd licht, en de zichtbaarheid van de horecalaag. Eerst worden maximaal 80 rijen opgebouwd; **Toon meer** maakt de volgende rijen beschikbaar.
+
+Een keuze uit de lijst, een kaartmarker of een adresresultaat opent hetzelfde detailpaneel. Een groen omrand punt geeft de geselecteerde analysepositie aan; de camera houdt rekening met het paneel en de tijdbediening. Het paneel toont bestaande broninformatie en acties zoals **Toon op kaart**, **Route**, **Website** en **Bellen** waar beschikbaar. Herkende waarden voor terras, toegankelijkheid, overdekking en seizoen krijgen Nederlandse labels. Onbekende waarden blijven herkenbaar als brondata. Openingstijden worden in F1 nog als brontekst getoond.
+
+Op desktop staat het paneel links onder de zoekbalk. Op mobiel staat het boven een compacte datum-/tijdregel; in landschap kan het naast de bediening staan. Een geopend toetsenbord krijgt een eigen hoogtebudget zodat een volledig zoekresultaat zichtbaar blijft. Teruggaan herstelt de focus naar de lijst; sluiten en Escape geven de focus terug aan de opener. Zoekuitkomsten worden via een afzonderlijke, rustige statusregio aangekondigd.
+
+Eerder geladen plekken blijven bij vernieuwingsfouten beschikbaar, met een herstelactie. Lage zoom, uitgeschakelde horeca, lege gebieden en niet gevonden namen hebben eigen uitleg. Een adres of verplaatst persoonlijk punt krijgt niet automatisch de zonstatus van een horecapin: ontbrekende of mislukte berekeningen worden als onbekend weergegeven.
+
 ## Locatiemodel en persoonlijke opslag
 
 De technische basis voor locatiebeheer staat in `src/places.ts` en `src/saved-places.ts`. Horeca, gezochte adressen en eigen kaartpunten gebruiken één locatiemodel. OSM-records krijgen een stabiel ID zoals `osm:node/42`; Photon-resultaten behouden hun OSM-identiteit wanneer die beschikbaar is. Adressen zonder bron-ID krijgen een naam-/positie-ID en eigen punten een UUID. De bestaande kaartklik en adreszoeker zijn op dezelfde selectie aangesloten.
@@ -92,7 +102,7 @@ De opslagmodule ondersteunt toevoegen, bijwerken, verwijderen, herladen en een v
 
 Opslagfouten worden teruggegeven; er is geen onzichtbaar tijdelijk "opgeslagen" resultaat. Beschadigde of onbekende opslagversies worden behouden. De laatste geldige geheugenversie kan bij latere opslagproblemen worden geëxporteerd. Een optimistische controle op de laatst gelezen opslagwaarde herkent wijzigingen uit een ander tabblad; dit is geen synchronisatie tussen apparaten. Bij toekomstige beperkte providers bevat de persoonlijke collectie alleen bron-ID's en eigen gegevens: hun zaakdetails, foto's en broncoördinaten worden niet automatisch opgeslagen of geëxporteerd. Open bronverwijzingen en, waar relevant, OSM-attributie blijven wel aanwezig.
 
-Deze onderlaag wordt gebruikt voor het ontdekmenu in F1 en de bediening voor Mijn plekken, toevoegen en import/export in F2; zie [de roadmap](./ROADMAP.md).
+Het ontdekmenu gebruikt deze onderlaag. F2 voegt de gebruikersbediening voor Mijn plekken, toevoegen en import/export toe; zie [de roadmap](./ROADMAP.md).
 
 ## Nauwkeurigheid en beperkingen
 

@@ -1,5 +1,6 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
+import './place-panel.css';
 import { createTerraceMap, type ViewBounds } from './map';
 import { buildingViewKey, type BuildingSummary } from './building-protocol';
 import { PALETTE_STORAGE_KEY } from './building-palette';
@@ -19,6 +20,9 @@ import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
 import { overpassScheduler } from './overpass';
 import { addressPlace, createPlaceSelection, terracePlace } from './places';
 import { createSavedPlacesStore } from './saved-places';
+import { createPlacePanel } from './place-panel';
+import type { DiscoveryContext } from './discovery';
+import type { Place, PlaceCoordinates } from './places';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App-element ontbreekt');
@@ -66,6 +70,9 @@ app.innerHTML = `
       <button id="my-location" class="location-button map-card" type="button" aria-label="Ga naar mijn locatie" title="Ga naar mijn locatie">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
       </button>
+      <button id="discover-places" class="discover-button map-card" type="button" aria-label="Ontdek locaties in dit kaartgebied" aria-controls="place-panel" aria-expanded="false" title="Ontdek locaties">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h1m-1 6h1m-1 6h1"/></svg><span>Ontdek</span>
+      </button>
     </div>
 
     <section class="solar-card map-card" aria-live="polite">
@@ -73,6 +80,8 @@ app.innerHTML = `
       <strong id="solar-time">${formatMinutes(currentMinutes)}</strong>
       <span id="solar-detail">Zonpositie berekenen...</span>
     </section>
+
+    <aside id="place-panel" class="place-panel" hidden></aside>
 
     <section class="control-panel map-card" aria-label="Zon en kaart instellen">
       <div class="time-row">
@@ -90,7 +99,7 @@ app.innerHTML = `
         <span>00:00</span><span>Tijdstip</span><span>23:55</span>
       </label>
       <div class="timeline">
-        <input id="time" class="time-slider" type="range" min="0" max="1435" step="5" value="${currentMinutes}" />
+        <input id="time" class="time-slider" type="range" aria-label="Tijdstip" min="0" max="1435" step="5" value="${currentMinutes}" />
         <div class="timeline-events">
           <span id="sunrise-event" class="sun-event sunrise-event" role="img" hidden>${solarEventIcon(true)}<span></span></span>
           <span id="sunset-event" class="sun-event sunset-event" role="img" hidden>${solarEventIcon(false)}<span></span></span>
@@ -146,6 +155,8 @@ const controlPanel = requiredElement<HTMLElement>('.control-panel');
 const mapActions = requiredElement<HTMLElement>('.map-actions');
 const solarCard = requiredElement<HTMLElement>('.solar-card');
 const shell = requiredElement<HTMLElement>('.shell');
+const placePanelElement = requiredElement<HTMLElement>('#place-panel');
+const discoverButton = requiredElement<HTMLButtonElement>('#discover-places');
 const mobileLayout = window.matchMedia('(max-width: 680px), (max-height: 500px) and (pointer: coarse)');
 const bottomControls = document.createElement('div');
 bottomControls.className = 'bottom-controls';
@@ -157,14 +168,16 @@ function updateViewportLayout(): void {
   const keyboard = Math.max(0, window.innerHeight - height - (viewport?.offsetTop ?? 0));
   shell.style.setProperty('--visible-height', `${height}px`);
   shell.style.setProperty('--keyboard-offset', `${keyboard}px`);
+  shell.classList.toggle('has-keyboard', keyboard > 80);
   shell.style.setProperty('--bottom-controls-height', `${bottomControls.getBoundingClientRect().height}px`);
+  shell.style.setProperty('--control-panel-height', `${controlPanel.getBoundingClientRect().height}px`);
 }
 
 function arrangeControls(): void {
   overpassScheduler.setConcurrency(mobileLayout.matches ? 1 : 2);
   const focused = document.activeElement as HTMLElement | null;
-  if (mobileLayout.matches) bottomControls.append(controlPanel, mapActions);
-  else { solarCard.before(mapActions); notice.before(controlPanel); }
+  if (mobileLayout.matches) bottomControls.append(placePanelElement, controlPanel, mapActions);
+  else { solarCard.before(mapActions); notice.before(controlPanel); controlPanel.before(placePanelElement); }
   if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
   updateViewportLayout();
 }
@@ -175,16 +188,22 @@ window.visualViewport?.addEventListener('scroll', updateViewportLayout);
 window.addEventListener('resize', updateViewportLayout);
 const controlsObserver = new ResizeObserver(updateViewportLayout);
 controlsObserver.observe(bottomControls);
+controlsObserver.observe(controlPanel);
+controlsObserver.observe(placePanelElement);
 arrangeControls();
 
 function mapTargetOffset(): [number, number] {
-  if (!mobileLayout.matches) return [0, 0];
+  if (!mobileLayout.matches && placePanelElement.hidden) return [0, 0];
   const map = requiredElement<HTMLElement>('#map').getBoundingClientRect();
-  const centerX = map.left + map.width / 2;
+  let left = map.left + 12, right = map.right - 12;
+  const panel = placePanelElement.getBoundingClientRect();
+  if (!placePanelElement.hidden && panel.left <= map.left + 24 && panel.right < map.right - 180) left = panel.right + 12;
+  const centerX = (left + right) / 2;
   const header = solarCard.getBoundingClientRect();
-  const top = (centerX >= header.left && centerX <= header.right ? Math.max(0, header.bottom - map.top) : 0) + 12;
-  const bottom = bottomControls.getBoundingClientRect().top - map.top - 12;
-  return [0, (top + Math.max(top, bottom)) / 2 - map.height / 2];
+  const top = (centerX >= header.left && centerX <= header.right ? Math.max(map.top, header.bottom) : map.top) + 12;
+  const bottom = (mobileLayout.matches ? bottomControls : controlPanel).getBoundingClientRect().top - 12;
+  right = Math.max(left, right);
+  return [(left + right) / 2 - (map.left + map.width / 2), (top + Math.max(top, bottom)) / 2 - (map.top + map.height / 2)];
 }
 
 let terraces: TerraceFeature[] = [];
@@ -216,7 +235,63 @@ let searchVersion = 0;
 let searchMatches: SearchResult[] = [];
 let activeSearchIndex = -1;
 let initialLocationAllowed = true;
+let viewBounds: ViewBounds | null = null;
+let terraceLoadState: DiscoveryContext['state'] = 'loading';
+let terraceStatusesPending = true;
+let terraceStatusUnavailable = false;
+let userCoordinates: PlaceCoordinates | null = null;
+let selectionOrigin: HTMLElement | undefined;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
+
+const placePanel = createPlacePanel(placePanelElement, {
+  trigger: discoverButton,
+  onSelect: (place, origin) => selectPlace(place, origin),
+  onClear: () => placeSelection.select(null),
+  onOpenChange(open) { shell.classList.toggle('places-open', open); updateViewportLayout(); },
+  onRetry() { if (viewBounds) void loadTerraces(viewBounds, terraceMap.map.getZoom()); },
+  onZoom() { terraceMap.map.easeTo({ zoom: Math.max(14, Math.min(18, terraceMap.map.getZoom() + 1)) }); },
+  onShowTerraces() {
+    const checkbox = requiredElement<HTMLInputElement>('#terraces'); checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+  },
+  onShowAll() {
+    const checkbox = requiredElement<HTMLInputElement>('#sun-only'); checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+  },
+  onShowOnMap: () => centerSelectedPlace(),
+});
+
+function refreshDiscovery(): void {
+  const center = terraceMap.map.getCenter();
+  const date = dateAtMinutes(dateInput.value, Number(timeInput.value));
+  const dateLabel = Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }).format(date) : 'Datum kiezen';
+  placePanel.setContext({ terraces, bounds: viewBounds, origin: userCoordinates ?? [center.lng, center.lat],
+    originLabel: userCoordinates ? 'je locatie' : 'het kaartcentrum', state: terraceLoadState,
+    onlySunny: requiredElement<HTMLInputElement>('#sun-only').checked,
+    terracesVisible: requiredElement<HTMLInputElement>('#terraces').checked, statusPending: terraceStatusesPending, statusUnavailable: terraceStatusUnavailable,
+    timeLabel: `${dateLabel} · ${formatMinutes(Number(timeInput.value))}` });
+}
+
+function centerSelectedPlace(zoom?: number): void {
+  const selected = placeSelection.get();
+  if (!selected) return;
+  terraceMap.map.flyTo({ center: selected.analysisPoint.coordinates, zoom: zoom ?? Math.max(15.5, terraceMap.map.getZoom()),
+    offset: mapTargetOffset(), essential: true });
+}
+
+function selectPlace(place: Place, origin: HTMLElement, zoom?: number): void {
+  initialLocationAllowed = false;
+  selectionOrigin = origin;
+  placeSelection.select(place);
+  selectionOrigin = undefined;
+  centerSelectedPlace(zoom);
+}
+
+placeSelection.subscribe(selected => {
+  terraceMap.setSelectedPlace(selected?.analysisPoint.coordinates ?? null);
+  placePanel.setSelection(selected, selectionOrigin);
+});
 
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
 
@@ -293,11 +368,13 @@ function scheduleSolarRender(classifyTerraceStatus = false): void {
   // Any visible solar-state change invalidates a status response still in flight.
   shadowRequestId += 1;
   classifyOnNextFrame ||= classifyTerraceStatus;
+  if (classifyTerraceStatus) { terraceStatusesPending = true; terraceStatusUnavailable = false; }
   cancelAnimationFrame(updateFrame);
   updateFrame = requestAnimationFrame(() => {
     const shouldClassify = classifyOnNextFrame;
     classifyOnNextFrame = false;
     renderSolarState(shouldClassify);
+    refreshDiscovery();
   });
 }
 
@@ -306,7 +383,10 @@ shadowWorker.onmessage = (event: MessageEvent<ShadowWorkerResponse>) => {
   if (result.type === 'error') {
     const isCurrent = result.generation === obstacleGeneration
       && (result.operation === 'mesh' || result.id === shadowRequestId);
-    if (isCurrent) showNotice('Schaduwen konden niet worden berekend.');
+    if (isCurrent) {
+      terraceStatusesPending = false; terraceStatusUnavailable = true; refreshDiscovery();
+      showNotice('Schaduwen konden niet worden berekend.');
+    }
     return;
   }
   if (result.generation !== obstacleGeneration) return;
@@ -316,10 +396,16 @@ shadowWorker.onmessage = (event: MessageEvent<ShadowWorkerResponse>) => {
   }
   if (result.id !== shadowRequestId) return;
   terraces = applyTerraceStatuses(terraces, result.statuses);
+  terraceStatusesPending = false;
+  terraceStatusUnavailable = false;
   terraceMap.setTerraces(terraces);
+  refreshDiscovery();
 };
 
-shadowWorker.onerror = () => showNotice('Schaduwen konden niet worden berekend.');
+shadowWorker.onerror = () => {
+  terraceStatusesPending = false; terraceStatusUnavailable = true; refreshDiscovery();
+  showNotice('Schaduwen konden niet worden berekend.');
+};
 
 function updateObstacles(buildingsChanged = true, treesChanged = true): void {
   obstacleGeneration += 1;
@@ -428,31 +514,40 @@ async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise
 async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   terraceRequest?.abort();
   if (zoom < 13) {
+    terraceLoadState = 'zoom';
     terraces = [];
     terraceMap.setTerraces([]);
+    refreshDiscovery();
     showNotice('Zoom verder in om terrassen en schaduwen te zien.');
     setLoadingStep(loadTerracesStep, 'done');
     return;
   }
 
   setLoadingStep(loadTerracesStep, 'active');
+  terraceLoadState = 'loading';
+  refreshDiscovery();
   const request = new AbortController();
   terraceRequest = request;
   try {
     const nextTerraces = await fetchTerraces(bounds, request.signal);
     if (request.signal.aborted || terraceRequest !== request) return;
     terraces = nextTerraces;
+    terraceLoadState = 'ready';
+    terraceStatusesPending = true;
     const selectedId = placeSelection.get()?.place.id;
     if (selectedId) {
       const selected = terraces.find(terrace => `osm:${terrace.properties.osmType}/${terrace.properties.osmId}` === selectedId);
       if (selected) placeSelection.refresh(terracePlace(selected));
     }
     terraceMap.setTerraces(terraces);
+    refreshDiscovery();
     scheduleSolarRender(true);
     setLoadingStep(loadTerracesStep, 'done');
-    if (terraces.length === 0) showNotice('Geen terrassen met OSM-terraslabel in dit kaartbeeld.');
+    if (terraces.length === 0 && !placePanel.isOpen()) showNotice('Geen horecalocaties gevonden in dit kaartgebied.');
   } catch {
     if (request.signal.aborted || terraceRequest !== request) return;
+    terraceLoadState = 'error';
+    refreshDiscovery();
     setLoadingStep(loadTerracesStep, 'done');
     showNotice('Terrassen konden niet worden geladen. Probeer het later opnieuw.');
     finishLoading(true);
@@ -462,7 +557,7 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 }
 
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
-  onPlaceSelect(place) { placeSelection.select(place); },
+  onPlaceSelect(place) { selectPlace(place, terraceMap.map.getCanvas()); },
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
     updateObstacles(true, terraceMap.map.getZoom() < 14);
@@ -470,6 +565,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     if (capped) showNotice('Veel gebouwen zichtbaar. Zoom verder in voor preciezere schaduwen.');
   },
   onViewChange(bounds, zoom) {
+    viewBounds = bounds;
     scheduleSolarRender();
     void loadTerraces(bounds, zoom);
     void loadTrees(bounds, zoom);
@@ -499,6 +595,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     showNotice('Een deel van de kaarttegels kon niet laden. Probeer opnieuw te bewegen of in te zoomen.');
   },
 });
+refreshDiscovery();
 
 retryBuildings.addEventListener('click', () => {
   loadedBuildingKey = '';
@@ -539,7 +636,6 @@ function setActiveSearchIndex(index: number): void {
 }
 
 function selectSearchResult(result: SearchResult): void {
-  placeSelection.select(addressPlace(result));
   initialLocationAllowed = false;
   searchInput.value = [result.label, result.detail].filter(Boolean).join(', ');
   searchVersion += 1;
@@ -548,7 +644,7 @@ function selectSearchResult(result: SearchResult): void {
   searchMatches = [];
   closeSearch();
   searchInput.blur();
-  terraceMap.map.flyTo({ center: result.coordinates, zoom: result.kind === 'place' ? 14 : 16, offset: mapTargetOffset(), essential: true });
+  selectPlace(addressPlace(result), searchInput, result.kind === 'place' ? 14 : 16);
 }
 
 function renderSearchResults(): void {
@@ -624,6 +720,7 @@ searchInput.addEventListener('keydown', (event) => {
 });
 
 searchInput.addEventListener('focus', () => {
+  if (placePanel.isOpen()) placePanel.close(false);
   if (searchMatches.length) renderSearchResults();
 });
 document.addEventListener('pointerdown', (event) => {
@@ -638,7 +735,9 @@ document.addEventListener('pointerdown', (event) => {
 
 const locationTracker = navigator.geolocation && window.isSecureContext ? createLocationTracker(navigator.geolocation, {
   onPosition(position) {
+    userCoordinates = [position.coords.longitude, position.coords.latitude];
     terraceMap.setUserLocation([position.coords.longitude, position.coords.latitude]);
+    refreshDiscovery();
   },
   onCenter(position, initial) {
     if ((initial && !initialLocationAllowed) || document.visibilityState === 'hidden') return;
@@ -651,7 +750,7 @@ const locationTracker = navigator.geolocation && window.isSecureContext ? create
     locationButton.setAttribute('aria-label', busy ? 'Locatie bepalen…' : 'Ga naar mijn locatie');
   },
   onError(error, initial) {
-    if (error.code === 1) terraceMap.setUserLocation(null);
+    if (error.code === 1) { userCoordinates = null; terraceMap.setUserLocation(null); refreshDiscovery(); }
     if (initial && !initialLocationAllowed) return;
     showNotice(error.code === 1
       ? 'Locatietoegang geweigerd. Zoek een plaats of probeer de locatieknop opnieuw.'
@@ -692,6 +791,7 @@ timeInput.addEventListener('change', () => scheduleSolarRender(true));
 for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
   requiredElement<HTMLInputElement>(`#${layer}`).addEventListener('change', (event) => {
     terraceMap.setVisibility(layer, (event.currentTarget as HTMLInputElement).checked);
+    if (layer === 'terraces') refreshDiscovery();
   });
 }
 
@@ -708,4 +808,5 @@ requiredElement<HTMLInputElement>('#trees').addEventListener('change', (event) =
 
 requiredElement<HTMLInputElement>('#sun-only').addEventListener('change', (event) => {
   terraceMap.setOnlySunny((event.currentTarget as HTMLInputElement).checked);
+  refreshDiscovery();
 });

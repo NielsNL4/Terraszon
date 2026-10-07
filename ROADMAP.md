@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2 en T3 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3 en F1 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -38,7 +38,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2 en T3 zijn uitgevoerd en gecontr
 | T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Open |
 | T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Open, later |
 | T8 | Nederlandse databronnen en hoogteverrijking | Evaluatie T7 | Open, later |
-| F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Open |
+| F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Afgerond — 7 oktober 2026 |
 | F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Open |
 | F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Open |
 | F4 | Dagzonrapport voor iedere locatie | T5, F1 | Open |
@@ -235,6 +235,17 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Laden, fout, lege lijst en een adres zonder horecagegevens hebben passende weergaven.
 
 **Commit:** `Add a responsive place discovery panel`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- De gebruiker bevestigde **menu altijd gesloten bij openen**, op desktop en mobiel. Ontdek, een kaartmarker of een adreskeuze opent het paneel.
+- Desktopzijpaneel, mobiele sheet, landschapsindeling en compact gemaakte mobiele tijdbediening toegevoegd binnen de bestaande stijl. Geselecteerde analysepositie heeft één kaartmarkering en wordt buiten bedieningspanelen gecentreerd.
+- Lijst voor het huidige kaartgebied, lokale/accentongevoelige zoekfunctie, hemelsbrede afstand en gedeeld Alleen-zon-/horecalaaggedrag geïmplementeerd. Eerst 80 rijen; gebruiker kan meer tonen.
+- Bestaande detailinformatie, bronlinks en kaart-/route-/website-/belacties behouden. Adresselecties, lege gebieden, lage zoom, uitgezette horeca, bronfouten en onbekende zonstatus hebben passende weergaven.
+- Controles geslaagd: `npm run lint` (Oxlint), `npm test` (147 tests in 18 bestanden) en `npm run build`.
+- Native Chromium/MapLibre-browserchecks geslaagd op 1366×900, 390×844, 320×740, 844×390 en een gesimuleerd 390×400-toetsenbordviewport: standaard gesloten, lokale query, kaartklik, adres, geselecteerd punt, filters, focus/Escape/terug, fouten/leegte, zoomherstel, 80→120 rijen, live zoekmelding, GPS-afstand zonder hercentreren, tijdslider en geen bedieningsoverlap.
+- Visuele review vond drie herstelpunten: toetsenbordhoogte, toegankelijke zoekmeldingen en Nederlandse broncategorieën. De reviewer beoordeelde alle drie als opgelost; de `ship`-verdict heeft betrekking op deze gescoorde fixes. Mechanische UI-detector gaf geen bevindingen.
+- Bewijsgrenzen: browserdata zijn herkenbare synthetische Test-locaties met gesimuleerde schaduwstatussen; de basiskaart en MapLibre-renderer zijn echt. Er is geen praktijknauwkeurigheids- of FPS-benchmark gedaan. De bestaande waarschuwing over de grote kaartbundle blijft aanwezig.
+- Product- en ontwerpcontext zijn vastgelegd voor vervolgfases. Volgende fase: F2, de gebruikersbediening voor Mijn plekken en eigen locaties.
 
 ### F2 — Mijn plekken en eigen locaties
 
