@@ -1,7 +1,7 @@
 import { buildingBox, parseBuildings } from './building-types';
-import { OVERPASS_ENDPOINTS } from './terraces';
+import { OVERPASS_ENDPOINTS, OVERPASS_LOAD_TIMEOUT, requestOverpassJSON } from './overpass';
 import type { CategorizedBuilding } from './types';
-import { abortable, aborted, requestJSON } from './requests';
+import { abortable, aborted } from './requests';
 import { splitDataBounds, type DataCoverage } from './data-coverage';
 
 type Bounds = { south: number; west: number; north: number; east: number };
@@ -25,6 +25,8 @@ export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[]; st
 type AreaStore = { get: (key: string) => Promise<CachedArea | null>; set: (key: string, value: CachedArea) => Promise<void> };
 type LoaderOptions = { mobile?: boolean; store?: AreaStore; deadline?: number; maximumDepth?: number; maximumRefinements?: number };
 type AreaResult = { buildings: CategorizedBuilding[]; status: DataCoverage; capped: boolean; failedAreas: number; areaStatuses: DataCoverage[] };
+type SourceResult = { buildings: CategorizedBuilding[]; capped: boolean };
+type SourceJob = { areas: Bounds[]; controller: AbortController; promise: Promise<SourceResult>; subscribers: number; held: boolean };
 
 export function buildingAreas(bounds: Bounds, mobile = false): Bounds[] {
   const areas: Bounds[] = [];
@@ -50,6 +52,8 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
   const latitudeScale = options.mobile ? 200 : 100, longitudeScale = options.mobile ? 100 : 50;
   const batchSize = options.mobile ? 2 : 4;
   const memory = new Map<string, CachedArea>();
+  const inFlight = new Map<string, SourceJob>();
+  let wanted: Bounds[] = [];
   const keyFor = (area: Bounds) => `terraszon:v4:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(':')}`;
   const remember = (key: string, cached: CachedArea) => {
     memory.delete(key);
@@ -84,15 +88,19 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       });
       const key = keyFor(area), cached: CachedArea = { savedAt: Date.now(), buildings: subset,
         source: 'osm', status: subset.length ? 'complete' : 'empty' };
-      remember(key, cached);
       statuses.push(cached.status);
+      const previous = memory.get(key);
+      if (previous && Date.now() - previous.savedAt < (previous.status === 'empty' ? 60_000 : CACHE_TTL)
+        && previous.status === cached.status && previous.buildings.length === subset.length
+        && previous.buildings.every((building, index) => building === subset[index])) continue;
+      remember(key, cached);
       // Complete empty areas are remembered briefly in memory, not for 24 hours.
       if (subset.length) void store.set(key, cached).catch(() => {});
     }
     return statuses;
   };
 
-  const loadArea = async (areas: Bounds[], signal: AbortSignal) => {
+  const loadRawArea = async (areas: Bounds[], signal: AbortSignal): Promise<SourceResult> => {
     // Batch up to four neighboring cells into one API request: many separate
     // small queries would exhaust the public instances' per-client quota.
     const envelope = { south: Math.min(...areas.map(a => a.south)), north: Math.max(...areas.map(a => a.north)),
@@ -111,7 +119,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       try {
         const url = new URL(endpoint);
         url.searchParams.set('data', query);
-        const payload = await requestJSON<Parameters<typeof parseBuildings>[0] & { remark?: string }>(url, signal, 18_000);
+        const payload = await requestOverpassJSON<Parameters<typeof parseBuildings>[0] & { remark?: string }>(url, signal, 25_000);
         if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
         if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
         return { buildings: parseBuildings({ elements: payload.elements.slice(0, limit) }), capped: payload.elements.length > limit };
@@ -123,7 +131,47 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
   };
 
-  return async (bounds: Bounds, signal: AbortSignal, onProgress?: (data: BuildingData) => void): Promise<BuildingData> => {
+  const intersects = (a: Bounds, b: Bounds) => a.south < b.north && a.north > b.south && a.west < b.east && a.east > b.west;
+  const forget = (job: SourceJob) => {
+    for (const area of job.areas) if (inFlight.get(keyFor(area)) === job) inFlight.delete(keyFor(area));
+  };
+  const cancelUnused = (job: SourceJob) => {
+    if (!job.held && !job.subscribers) { forget(job); job.controller.abort(); }
+  };
+  const loadArea = async (areas: Bounds[], signal: AbortSignal, retained?: SourceJob): Promise<SourceResult> => {
+    if (signal.aborted) throw aborted(signal);
+    let job = retained ?? inFlight.get(keyFor(areas[0]));
+    if (!job || (!retained && areas.some(area => inFlight.get(keyFor(area)) !== job))) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new DOMException('Gebouwbron reageerde niet op tijd', 'TimeoutError')),
+        options.deadline ?? OVERPASS_LOAD_TIMEOUT);
+      const source: SourceJob = { areas, controller, subscribers: 0,
+        held: areas.some(area => wanted.some(view => intersects(area, view))),
+        promise: loadRawArea(areas, controller.signal) };
+      source.promise = source.promise.then(result => {
+        if (controller.signal.aborted) throw aborted(controller.signal);
+        if (!result.capped) saveAreas(areas, result.buildings);
+        return result;
+      }).finally(() => { clearTimeout(timer); forget(source); });
+      // A retained source can temporarily have no view subscriber during a
+      // handoff. Its own deadline remains unchanged and rejection is handled.
+      void source.promise.catch(() => {});
+      for (const area of areas) inFlight.set(keyFor(area), source);
+      job = source;
+    }
+    job.subscribers++;
+    try {
+      const result = await abortable(job.promise, signal);
+      if (areas.length === job.areas.length && areas.every(area => job.areas.some(part => keyFor(part) === keyFor(area)))) return result;
+      const buildings = result.buildings.filter(building => {
+        const box = buildingBox(building.geometry);
+        return areas.some(area => intersects(box, area));
+      });
+      return { ...result, buildings };
+    } finally { job.subscribers--; cancelUnused(job); }
+  };
+
+  const load = async (bounds: Bounds, signal: AbortSignal, onProgress?: (data: BuildingData) => void): Promise<BuildingData> => {
     if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
     const allAreas = buildingAreas(bounds, options.mobile), areas = allAreas.slice(0, MAX_AREAS);
     const buildings = new Map<string, CategorizedBuilding>();
@@ -150,11 +198,12 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     const abort = () => controller.abort(aborted(signal));
     signal.addEventListener('abort', abort, { once: true });
     // Bound total waiting time even if every public instance is overloaded.
-    const deadline = setTimeout(() => controller.abort(new DOMException('Gebouwdata reageerde niet op tijd', 'TimeoutError')), options.deadline ?? 45_000);
+    const deadline = setTimeout(() => controller.abort(new DOMException('Gebouwdata reageerde niet op tijd', 'TimeoutError')), options.deadline ?? OVERPASS_LOAD_TIMEOUT);
     let finished = false;
     const pending: Bounds[] = [];
     let refinements = options.maximumRefinements ?? (options.mobile ? 8 : 16);
-    const resolveArea = async (batch: Bounds[], depth: number, report: (features: CategorizedBuilding[]) => void, initial = false): Promise<AreaResult> => {
+    const resolveArea = async (batch: Bounds[], depth: number, report: (features: CategorizedBuilding[]) => void,
+      initial = false, retained?: SourceJob): Promise<AreaResult> => {
       if (controller.signal.aborted) throw aborted(controller.signal);
       if (!initial && batch.length === 1) {
         const cached = await abortable(cachedArea(batch[0]), controller.signal);
@@ -165,7 +214,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       }
       if (!initial && refinements-- <= 0) return { buildings: [], status: 'partial', capped: true, failedAreas: 0, areaStatuses: batch.map(() => 'partial') };
       let result: Awaited<ReturnType<typeof loadArea>>;
-      try { result = await loadArea(batch, controller.signal); }
+      try { result = await loadArea(batch, controller.signal, retained); }
       catch (error) {
         if (controller.signal.aborted) throw aborted(controller.signal);
         lastError = error;
@@ -208,17 +257,25 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
         else pending.push(areas[index]);
       }
       if (loadedAreas) onProgress?.(snapshot());
+      const reused = new Map<SourceJob, Bounds[]>();
       const rows = new Map<number, Bounds[]>();
       for (const area of pending) {
+        const source = inFlight.get(keyFor(area));
+        if (source) {
+          const group = reused.get(source) ?? [];
+          group.push(area); reused.set(source, group); continue;
+        }
         if (!rows.has(area.south)) rows.set(area.south, []);
         rows.get(area.south)!.push(area);
       }
-      const batches = [...rows.values()].flatMap(row => Array.from({ length: Math.ceil(row.length / batchSize) },
-        (_, index) => row.slice(index * batchSize, index * batchSize + batchSize)));
+      const batches: Array<{ areas: Bounds[]; source?: SourceJob }> = [...reused].map(([source, areas]) => ({ areas, source }));
+      for (const row of rows.values()) for (let index = 0; index < row.length; index += batchSize) {
+        batches.push({ areas: row.slice(index, index + batchSize) });
+      }
       let next = 0;
       try { await abortable(Promise.all(Array.from({ length: Math.min(options.mobile ? 1 : 2, batches.length) }, async () => {
         while (next < batches.length && !controller.signal.aborted) {
-          const batch = batches[next++];
+          const { areas: batch, source } = batches[next++];
           const key = batch.map(keyFor).join('|');
           const provisional = new Map<string, CategorizedBuilding>();
           try {
@@ -229,7 +286,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
               }
               replaceContribution(key, [...provisional.values()]);
               onProgress?.(snapshot());
-            }, true);
+            }, true, source);
             if (finished || controller.signal.aborted) return;
             capped ||= result.capped;
             // A complete refined snapshot replaces provisional records (for
@@ -261,6 +318,15 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       signal.removeEventListener('abort', abort);
     }
   };
+  return Object.assign(load, {
+    retain(bounds: Bounds | null) {
+      wanted = bounds ? buildingAreas(bounds, options.mobile).slice(0, MAX_AREAS) : [];
+      for (const job of new Set(inFlight.values())) {
+        job.held = job.areas.some(area => wanted.some(view => intersects(area, view)));
+        cancelUnused(job);
+      }
+    },
+  });
 }
 
 export const fetchBuildings = createBuildingLoader();

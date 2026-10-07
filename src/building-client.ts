@@ -2,6 +2,7 @@ import type { GeoJSONSourceDiff } from 'maplibre-gl';
 import type { BuildingBounds, BuildingTile } from './building-geometry';
 import type { BuildingRequest, BuildingResponse, BuildingSummary } from './building-protocol';
 import type { CategorizedBuilding } from './types';
+import { createOverpassBroker } from './overpass-bridge';
 
 export function createBuildingClient(onData: (data: BuildingSummary) => void) {
   const worker = new Worker(new URL('./building-worker.ts', import.meta.url), { type: 'module' });
@@ -10,8 +11,12 @@ export function createBuildingClient(onData: (data: BuildingSummary) => void) {
     progress?: (value: BuildingSummary) => void; finish: () => void }>();
   const shapes = new Map<number, { resolve: (data: { diff: GeoJSONSourceDiff; count: number; changed: boolean }) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   const send = (message: BuildingRequest) => worker.postMessage(message);
+  const network = createOverpassBroker(send);
   worker.onmessage = (event: MessageEvent<BuildingResponse>) => {
     const response = event.data;
+    if (response.type === 'overpass-acquire' || response.type === 'overpass-release' || response.type === 'overpass-cancel') {
+      network.handle(response); return;
+    }
     if (response.type === 'geometry') {
       const shape = shapes.get(response.id);
       if (shape) { clearTimeout(shape.timer); shapes.delete(response.id); shape.resolve(response); }
@@ -31,6 +36,8 @@ export function createBuildingClient(onData: (data: BuildingSummary) => void) {
     else { job.finish(); job.resolve(response.data); }
   };
   worker.onerror = () => {
+    worker.terminate();
+    network.destroy();
     for (const job of [...jobs.values()]) { job.finish(); job.reject(new Error('Gebouwverwerking kon niet starten')); }
     for (const shape of shapes.values()) { clearTimeout(shape.timer); shape.reject(new Error('Gebouwverwerking kon niet starten')); }
     shapes.clear();
@@ -61,7 +68,7 @@ export function createBuildingClient(onData: (data: BuildingSummary) => void) {
     destroy() {
       for (const job of [...jobs.values()]) { job.finish(); job.reject(new DOMException('Afgebroken', 'AbortError')); }
       for (const shape of shapes.values()) { clearTimeout(shape.timer); shape.reject(new DOMException('Afgebroken', 'AbortError')); }
-      shapes.clear(); worker.terminate();
+      shapes.clear(); worker.terminate(); network.destroy();
     },
   };
 }

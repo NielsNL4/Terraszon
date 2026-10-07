@@ -2,8 +2,12 @@ import { createBuildingLoader, type BuildingData, type CachedArea } from './buil
 import { createBuildingGeometry } from './building-geometry';
 import { createAreaCache } from './area-cache';
 import type { BuildingRequest, BuildingResponse, BuildingSummary } from './building-protocol';
+import { createWorkerOverpassGate } from './overpass-bridge';
+import { setOverpassGate } from './overpass';
 
 const scope = self as unknown as { onmessage: (event: MessageEvent<BuildingRequest>) => void; postMessage: (message: BuildingResponse) => void };
+const network = createWorkerOverpassGate(message => scope.postMessage(message));
+setOverpassGate(network);
 const store = createAreaCache<CachedArea>();
 const desktop = createBuildingLoader({ store });
 const mobile = createBuildingLoader({ store, mobile: true });
@@ -19,6 +23,7 @@ const summary = (data: BuildingData): BuildingSummary => {
 };
 scope.onmessage = (event) => {
   const request = event.data;
+  if (request.type === 'overpass-grant' || request.type === 'overpass-denied') { network.handle(request); return; }
   if (request.type === 'known') { if (geometry.setKnown(request.buildings)) revision++; return; }
   if (request.type === 'reset') { geometry.reset(); return; }
   if (request.type === 'geometry') {
@@ -26,7 +31,12 @@ scope.onmessage = (event) => {
     catch (error) { scope.postMessage({ type: 'error', id: request.id, message: error instanceof Error ? error.message : 'Gebouwweergave kon niet worden verwerkt' }); }
     return;
   }
-  if (request.type === 'cancel') { if (active?.id === request.id) active.controller.abort(); return; }
+  if (request.type === 'cancel') {
+    if (active?.id === request.id) { desktop.retain(null); mobile.retain(null); active.controller.abort(); }
+    return;
+  }
+  desktop.retain(request.mobile ? null : request.bounds);
+  mobile.retain(request.mobile ? request.bounds : null);
   active?.controller.abort();
   const job = { id: request.id, controller: new AbortController() };
   active = job;

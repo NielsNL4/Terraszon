@@ -1,13 +1,10 @@
 import type { TerraceEvidence, TerraceFeature, TerraceStatusResult } from './types';
+import { OVERPASS_ENDPOINTS, OVERPASS_LOAD_TIMEOUT, requestOverpassJSON } from './overpass';
+import { aborted, requestDeadline } from './requests';
 
-export const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-];
+export { OVERPASS_ENDPOINTS } from './overpass';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const CACHE_VERSION = 'v3';
-const REQUEST_TIMEOUT = 8_000;
 
 type Bounds = { south: number; west: number; north: number; east: number };
 
@@ -100,6 +97,7 @@ export function parseOverpass(data: OverpassResponse): TerraceFeature[] {
 }
 
 export async function fetchTerraces(bounds: Bounds, signal?: AbortSignal): Promise<TerraceFeature[]> {
+  if (signal?.aborted) throw aborted(signal);
   const key = cacheKey(bounds);
   try {
     const cached = localStorage.getItem(key);
@@ -116,40 +114,31 @@ export async function fetchTerraces(bounds: Bounds, signal?: AbortSignal): Promi
   const query = `[out:json][timeout:20];(nwr["amenity"~"^(bar|biergarten|cafe|fast_food|food_court|ice_cream|pub|restaurant)$"]["outdoor_seating"!~"^no$"](${bbox});nwr["leisure"="outdoor_seating"](${bbox}););out center tags;`;
   let lastError: unknown;
   let features: TerraceFeature[] | undefined;
-
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    const timeoutController = new AbortController();
-    const timeout = window.setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT);
-    const abortFromCaller = () => timeoutController.abort();
-    signal?.addEventListener('abort', abortFromCaller, { once: true });
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        body: new URLSearchParams({ data: query }),
-        signal: timeoutController.signal,
-      });
-      if (!response.ok) throw new Error(`${endpoint} gaf status ${response.status}`);
-       const payload = await response.json() as OverpassResponse & { remark?: string };
-       if (payload.remark) throw new Error(`Onvolledig Overpass-resultaat: ${payload.remark}`);
-       features = parseOverpass(payload);
-      break;
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      lastError = error;
-    } finally {
-      window.clearTimeout(timeout);
-      signal?.removeEventListener('abort', abortFromCaller);
-    }
-  }
-
-  if (!features) throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
+  const deadline = requestDeadline(signal ?? new AbortController().signal, OVERPASS_LOAD_TIMEOUT);
   try {
-    localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), features }));
-  } catch {
-    // A full or blocked cache should not hide fresh results.
-  }
-  return features;
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      try {
+        const payload = await requestOverpassJSON<OverpassResponse & { remark?: string }>(endpoint, deadline.signal, undefined, {
+          method: 'POST',
+          body: new URLSearchParams({ data: query }),
+        });
+        if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
+        features = parseOverpass(payload);
+        break;
+      } catch (error) {
+        if (deadline.signal.aborted) throw aborted(deadline.signal);
+        lastError = error;
+      }
+    }
+
+    if (!features) throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
+    try {
+      localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), features }));
+    } catch {
+      // A full or blocked cache should not hide fresh results.
+    }
+    return features;
+  } finally { deadline.dispose(); }
 }
 
 export function applyTerraceStatuses(

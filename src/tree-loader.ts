@@ -2,7 +2,8 @@ import { fetchTrees, type TreeAreaData } from './trees';
 import { describeTree } from './tree-profiles';
 import type { TreeFeature } from './types';
 import { splitDataBounds, type DataCoverage } from './data-coverage';
-import { aborted } from './requests';
+import { aborted, abortable, requestDeadline } from './requests';
+import { OVERPASS_LOAD_TIMEOUT } from './overpass';
 export { treeDataKey } from './tree-profiles';
 
 export type TreeBounds = { south: number; west: number; north: number; east: number };
@@ -46,7 +47,7 @@ export function missingTreeBounds(target: TreeBounds, coverage: TreeBounds[]): T
 export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumRequests?: number; maximumDepth?: number } = {}) {
   const regions: Array<{ bounds: TreeBounds; data: TreeAreaData; savedAt: number }> = [];
   const complete = (data: TreeAreaData) => data.status === 'complete' || data.status === 'empty';
-  return async (view: TreeBounds, signal: AbortSignal): Promise<TreeViewData> => {
+  const loadView = async (view: TreeBounds, signal: AbortSignal, callerSignal: AbortSignal): Promise<TreeViewData> => {
     if (signal.aborted) throw aborted(signal);
     for (let i = regions.length - 1; i >= 0; i--) {
       const ttl = regions[i].data.status === 'empty' ? EMPTY_TTL : TTL;
@@ -65,7 +66,7 @@ export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumR
       if (requests >= maximumRequests) { capped = true; return; }
       let data: TreeAreaData;
       try {
-        data = await fetchArea(area, signal, maximumRequests - requests);
+        data = await abortable(fetchArea(area, signal, maximumRequests - requests), signal);
       } catch {
         if (signal.aborted) throw aborted(signal);
         requests++;
@@ -96,7 +97,12 @@ export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumR
         for (const child of children) await load(child, depth + 1);
       }
     };
-    for (const area of areas) await load(area, 0);
+    try { for (const area of areas) await load(area, 0); }
+    catch (error) {
+      if (callerSignal.aborted) throw aborted(callerSignal);
+      if (!signal.aborted) throw error;
+      failedAreas++;
+    }
     // Drop superseded parent snapshots once all their child areas are covered.
     const coveredBounds = coverage();
     for (let i = regions.length - 1; i >= 0; i--) {
@@ -124,5 +130,10 @@ export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumR
     const uncovered = missingTreeBounds(target, coverage()).length > 0;
     return { trees, capped: capped && uncovered, renderLimited: ranked.length > MAX_RENDER_TREES, failedAreas, sources: [...sources].sort(),
       status: uncovered ? (trees.length || sources.size ? 'partial' : 'failed') : trees.length ? 'complete' : 'empty' };
+  };
+  return async (view: TreeBounds, signal: AbortSignal) => {
+    const deadline = requestDeadline(signal, OVERPASS_LOAD_TIMEOUT);
+    try { return await loadView(view, deadline.signal, signal); }
+    finally { deadline.dispose(); }
   };
 }

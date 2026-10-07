@@ -1,6 +1,6 @@
 import type { FeatureCollection, Point } from 'geojson';
 import type { TreeFeature } from './types';
-import { OVERPASS_ENDPOINTS } from './terraces';
+import { OVERPASS_ENDPOINTS, requestOverpassJSON } from './overpass';
 import { stableTreeFraction, TREE_PROFILES, treeIdentity } from './tree-profiles';
 import { aborted, requestJSON } from './requests';
 import type { DataBounds, DataCoverage } from './data-coverage';
@@ -242,7 +242,7 @@ export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumReq
     if (requests >= maximumRequests) break;
     try {
       requests++;
-      const payload = await requestJSON<{ elements: TreeElement[]; remark?: string }>(endpoint, signal, 8_000,
+      const payload = await requestOverpassJSON<{ elements: TreeElement[]; remark?: string }>(endpoint, signal, undefined,
         { method: 'POST', body: new URLSearchParams({ data: query }) });
       if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
       const records = payload.elements.slice(0, TREE_PAGE_SIZE);

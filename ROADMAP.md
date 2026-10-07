@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1 is uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1 en T2 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -31,7 +31,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1 is uitgevoerd en gecontroleerd; de o
 | Fase | Doel | Afhankelijk van | Status |
 | --- | --- | --- | --- |
 | T1 | Volledigheid van gebouw- en boomdata | — | Afgerond — 7 oktober 2026 |
-| T2 | Requesthergebruik en netwerkplanning | T1 | Open |
+| T2 | Requesthergebruik en netwerkplanning | T1 | Afgerond — 7 oktober 2026 |
 | T3 | Locatiemodel en persoonlijke opslag | — | Open |
 | T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Open |
 | T5 | Zonrapport-engine per analysepunt | T1, T3 | Open |
@@ -97,6 +97,15 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Meet requestaantallen, annuleringen en tijd tot bruikbare data vóór en na de wijziging.
 
 **Commit:** `Reuse map requests and coordinate Overpass loading`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- Eén Overpass-budget toegevoegd voor de daadwerkelijke gebouw-, boom- en horecaloaders, inclusief de gebouwworker via een grant/release-protocol. JSON blijft in de worker. Desktop heeft twee slots, mobiel één.
+- Overlappende gebouwbatches worden per cel hergebruikt. View-abonnementen en broncontrollers zijn gescheiden; een nieuw kaartbeeld wordt vóór het annuleren van de oude view doorgegeven. Verre sprongen annuleren bronjobs die niet meer nuttig zijn; brondeadlines worden niet opnieuw gestart.
+- HTTP-status en `Retry-After` behouden; backoff, jitter en cooldowns voor 429/503/504 toegevoegd. Een parallel succes kan een nieuwere cooldown niet wissen. Wachtende jobs, workerfouten en late grants worden opgeruimd.
+- Deadlines afgestemd: 25 seconden actieve gebouwrequest, 30 seconden actieve OSM-boom-/horecarequest, 45 seconden totale bron-/laadoperatie en de bestaande 48 seconden hoofdthread-watchdog voor gebouwen.
+- Controles geslaagd: `npm run lint` (Oxlint), `npm test` (118 tests in 15 bestanden) en `npm run build`.
+- Gecontroleerde heen-en-weer-simulatie met 1.000 ms response-bodyvertraging: annuleren/herstarten gaf drie starts en bruikbare einddata op 1.600 ms; hergebruik gaf twee starts en einddata op 1.000 ms. De twee geannuleerde oude view-abonnees mogen geen nieuwe voortgang toepassen; de oorspronkelijke bron blijft bruikbaar voor de eindview.
+- Grenzen van het bewijs: dit zijn deterministische tests met gesimuleerde bronvertraging, geen praktijkbenchmark of visuele browsercontrole. Geen live requests verstuurd om publieke Overpass-quota uit te putten. De bestaande bundlewaarschuwing blijft aanwezig.
 
 ### T3 — Locatiemodel en persoonlijke opslag
 

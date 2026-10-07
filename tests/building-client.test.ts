@@ -33,4 +33,25 @@ describe('gebouwworker watchdog', () => {
     await expect(pending).rejects.toThrow('niet starten');
     client.destroy();
   });
+
+  it('negeert late voortgang van een oude view na een nieuwe selectie', async () => {
+    const { fake, update, client } = setup();
+    const bounds = { south: 53.21, north: 53.22, west: 6.56, east: 6.58 };
+    const oldController = new AbortController();
+    const old = client.load(bounds, false, oldController.signal);
+    const check = expect(old).rejects.toMatchObject({ name: 'AbortError' });
+    const oldId = fake.postMessage.mock.calls[0][0].id;
+    const next = client.load({ ...bounds, east: 6.6 }, false, new AbortController().signal);
+    const newId = fake.postMessage.mock.calls[1][0].id;
+    oldController.abort(); await check;
+    const data = { totalBuildings: 1, typedBuildings: 1, revision: 1, loadedAreas: 1, totalAreas: 1,
+      failedAreas: 0, capped: false, completeAreas: 1, emptyAreas: 0, partialAreas: 0,
+      status: 'complete' as const, source: 'osm' as const };
+    fake.onmessage!({ data: { type: 'progress', id: oldId, data } } as MessageEvent<BuildingResponse>);
+    expect(update).not.toHaveBeenCalled();
+    fake.onmessage!({ data: { type: 'complete', id: newId, data } } as MessageEvent<BuildingResponse>);
+    await expect(next).resolves.toEqual(data);
+    expect(update).toHaveBeenCalledOnce();
+    client.destroy();
+  });
 });

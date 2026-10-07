@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { applyTerraceStatuses, parseOverpass } from '../src/terraces';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { applyTerraceStatuses, fetchTerraces, parseOverpass } from '../src/terraces';
 import type { TerraceFeature } from '../src/types';
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 const terrace: TerraceFeature = {
   type: 'Feature',
@@ -86,5 +87,33 @@ describe('terrace data', () => {
       .toBe('shade');
     expect(applyTerraceStatuses([terrace], [{ id: 'node/1', status: 'night' }])[0].properties.status)
       .toBe('night');
+  });
+
+  it('begrenst de hele horeca-aanvraag wanneer response-bodies blijven hangen', async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
+    const setItem = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem });
+    const check = expect(fetchTerraces({ south: 53.21, west: 6.56, north: 53.22, east: 6.58 }))
+      .rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.advanceTimersByTimeAsync(45_001);
+    await check;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('cachet geen geannuleerd horecaresultaat als een late body alsnog voltooit', async () => {
+    let finish: ((value: { elements: unknown[] }) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => new Promise(resolve => { finish = resolve; }) }));
+    const setItem = vi.fn();
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem });
+    const controller = new AbortController();
+    const pending = fetchTerraces({ south: 53.21, west: 6.56, north: 53.22, east: 6.58 }, controller.signal);
+    const check = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    controller.abort(); await check;
+    finish!({ elements: [] }); await Promise.resolve();
+    expect(setItem).not.toHaveBeenCalled();
   });
 });

@@ -16,6 +16,7 @@ import {
 import { applyTerraceStatuses, fetchTerraces } from './terraces';
 import { bufferedTreeBounds, createTreeViewLoader, treeDataKey } from './tree-loader';
 import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
+import { overpassScheduler } from './overpass';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App-element ontbreekt');
@@ -158,6 +159,7 @@ function updateViewportLayout(): void {
 }
 
 function arrangeControls(): void {
+  overpassScheduler.setConcurrency(mobileLayout.matches ? 1 : 2);
   const focused = document.activeElement as HTMLElement | null;
   if (mobileLayout.matches) bottomControls.append(controlPanel, mapActions);
   else { solarCard.before(mapActions); notice.before(controlPanel); }
@@ -379,13 +381,13 @@ async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise
   }
   const key = buildingViewKey(bounds, mobileLayout.matches);
   if (buildingTypeRequest && !buildingTypeRequest.signal.aborted && buildingLoadKey === key) return;
-  if (loadedBuildingKey === key && loadedBuildingSummary
+  if (!buildingTypeRequest && loadedBuildingKey === key && loadedBuildingSummary
     && Date.now() - loadedBuildingAt < (loadedBuildingSummary.emptyAreas > 0 ? 60_000 : 24 * 60 * 60 * 1000)) {
     buildingStatus.textContent = `${loadedBuildingSummary.totalBuildings} gebouwen · ${loadedBuildingSummary.typedBuildings} met een specifiek type · geladen.`;
     retryBuildings.hidden = true;
     return;
   }
-  buildingTypeRequest?.abort();
+  const previous = buildingTypeRequest;
   buildingLoadKey = key;
   buildingStatus.textContent = 'Gebouwtypes laden…';
   retryBuildings.hidden = true;
@@ -400,12 +402,17 @@ async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise
     retryBuildings.hidden = loading || (data.failedAreas === 0 && data.partialAreas === 0);
   };
   try {
-    const result = await terraceMap.loadBuildings(bounds, mobileLayout.matches, request.signal, (data) => apply(data, true));
+    // Send the next view before cancelling the old subscriber, so the worker
+    // can retain overlapping source batches without a race or grace timeout.
+    const loading = terraceMap.loadBuildings(bounds, mobileLayout.matches, request.signal, (data) => apply(data, true));
+    previous?.abort();
+    const result = await loading;
     if (request.signal.aborted) return;
     apply(result, false);
     if (result.status === 'complete' || result.status === 'empty') { loadedBuildingKey = key; loadedBuildingAt = Date.now(); loadedBuildingSummary = result; }
   } catch (error) {
     if (request.signal.aborted) return;
+    previous?.abort();
     buildingStatus.textContent = 'Nieuwe gebouwtypes konden niet laden. Bestaande kleuren blijven behouden.';
     retryBuildings.hidden = false;
     console.error('Gebouwtypes laden mislukt', error);
@@ -425,18 +432,23 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
   }
 
   setLoadingStep(loadTerracesStep, 'active');
-  terraceRequest = new AbortController();
+  const request = new AbortController();
+  terraceRequest = request;
   try {
-    terraces = await fetchTerraces(bounds, terraceRequest.signal);
+    const nextTerraces = await fetchTerraces(bounds, request.signal);
+    if (request.signal.aborted || terraceRequest !== request) return;
+    terraces = nextTerraces;
     terraceMap.setTerraces(terraces);
     scheduleSolarRender(true);
     setLoadingStep(loadTerracesStep, 'done');
     if (terraces.length === 0) showNotice('Geen terrassen met OSM-terraslabel in dit kaartbeeld.');
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') return;
+  } catch {
+    if (request.signal.aborted || terraceRequest !== request) return;
     setLoadingStep(loadTerracesStep, 'done');
     showNotice('Terrassen konden niet worden geladen. Probeer het later opnieuw.');
     finishLoading(true);
+  } finally {
+    if (terraceRequest === request) terraceRequest = null;
   }
 }
 

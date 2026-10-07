@@ -110,4 +110,14 @@ describe('boomdata met buffer', () => {
     expect(result.trees).toHaveLength(1_000);
     expect(result.trees.some(tree => tree.properties.id === 'tree/1000')).toBe(false);
   });
+
+  it('begrenst de volledige boomload en behoudt cachebomen bij een stilgevallen uitbreidingsquery', async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn().mockResolvedValueOnce(data).mockImplementation(() => new Promise(() => {}));
+    const load = createTreeViewLoader(fetch);
+    await load(view, new AbortController().signal);
+    const pending = load({ ...view, east: 6.59 }, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(45_001);
+    expect(await pending).toMatchObject({ status: 'partial', trees, failedAreas: 1 });
+  });
 });
