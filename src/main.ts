@@ -17,6 +17,8 @@ import { applyTerraceStatuses, fetchTerraces } from './terraces';
 import { bufferedTreeBounds, createTreeViewLoader, treeDataKey } from './tree-loader';
 import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
 import { overpassScheduler } from './overpass';
+import { addressPlace, createPlaceSelection, terracePlace } from './places';
+import { createSavedPlacesStore } from './saved-places';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App-element ontbreekt');
@@ -186,6 +188,8 @@ function mapTargetOffset(): [number, number] {
 }
 
 let terraces: TerraceFeature[] = [];
+const savedPlaces = createSavedPlacesStore();
+const placeSelection = createPlaceSelection(id => savedPlaces.get(id));
 let trees: TreeFeature[] = [];
 let buildings: BuildingFeature[] = [];
 let treesEnabled = true;
@@ -438,6 +442,11 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
     const nextTerraces = await fetchTerraces(bounds, request.signal);
     if (request.signal.aborted || terraceRequest !== request) return;
     terraces = nextTerraces;
+    const selectedId = placeSelection.get()?.place.id;
+    if (selectedId) {
+      const selected = terraces.find(terrace => `osm:${terrace.properties.osmType}/${terrace.properties.osmId}` === selectedId);
+      if (selected) placeSelection.refresh(terracePlace(selected));
+    }
     terraceMap.setTerraces(terraces);
     scheduleSolarRender(true);
     setLoadingStep(loadTerracesStep, 'done');
@@ -453,6 +462,7 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 }
 
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
+  onPlaceSelect(place) { placeSelection.select(place); },
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
     updateObstacles(true, terraceMap.map.getZoom() < 14);
@@ -529,6 +539,7 @@ function setActiveSearchIndex(index: number): void {
 }
 
 function selectSearchResult(result: SearchResult): void {
+  placeSelection.select(addressPlace(result));
   initialLocationAllowed = false;
   searchInput.value = [result.label, result.detail].filter(Boolean).join(', ');
   searchVersion += 1;

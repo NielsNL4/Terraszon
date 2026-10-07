@@ -19,6 +19,7 @@ import { loadPalette, UNKNOWN_BUILDING_COLOR } from './building-palette';
 import { treeMarkers } from './trees';
 import { InstancedTreeLayer } from './tree-layer';
 import type { BuildingFeature, CategorizedBuilding, ShadowMesh, TerraceFeature, TreeFeature } from './types';
+import { terracePlace, type Place } from './places';
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
 const BUILDING_LAYER = 'building-3d';
@@ -57,6 +58,7 @@ type MapCallbacks = {
   onError: (message: string) => void;
   onMapReady?: () => void;
   onBuildingError?: (message: string) => void;
+  onPlaceSelect?: (place: Place) => void;
 };
 
 export type TerraceMap = {
@@ -413,6 +415,8 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       const feature = map.queryRenderedFeatures(event.point, { layers: [TERRACE_LAYER] })[0];
       if (!feature || feature.geometry.type !== 'Point') return;
       const properties = feature.properties;
+      const selected = terraceData.find(terrace => terrace.properties.id === properties.id);
+      if (selected) callbacks.onPlaceSelect?.(terracePlace(selected));
       const status = properties.status === 'sun'
         ? 'In de zon'
         : properties.status === 'filtered' ? 'Mogelijke boomschaduw / gefilterd licht'

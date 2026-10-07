@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1 en T2 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2 en T3 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -32,7 +32,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1 en T2 zijn uitgevoerd en gecontrolee
 | --- | --- | --- | --- |
 | T1 | Volledigheid van gebouw- en boomdata | — | Afgerond — 7 oktober 2026 |
 | T2 | Requesthergebruik en netwerkplanning | T1 | Afgerond — 7 oktober 2026 |
-| T3 | Locatiemodel en persoonlijke opslag | — | Open |
+| T3 | Locatiemodel en persoonlijke opslag | — | Afgerond — 7 oktober 2026 |
 | T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Open |
 | T5 | Zonrapport-engine per analysepunt | T1, T3 | Open |
 | T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Open |
@@ -123,6 +123,16 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Providerdata met beperkte exportrechten komt niet automatisch in persoonlijke exports.
 
 **Commit:** `Add a shared place model and local collections`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- Eén locatiemodel en selectiestroom toegevoegd voor horeca, adressen en eigen punten. De bestaande kaartklik en adreszoeker zijn aangesloten; Photon-OSM-ID's en namespaces zorgen voor consistente bronidentiteit.
+- Bron-/zaakgegevens gescheiden van persoonlijke naam, favorietstatus, notitie, type en analysepunten. Bronverversing behoudt persoonlijke data. Getters en selecties leveren kopieën in plaats van mutable interne records.
+- Lokale collectie met schema versie 1 toegevoegd, inclusief save/update/remove, foutstatus, herladen en expliciete import/export. Maximaal 500 locaties en acht analysepunten per locatie. De centrale decoder vormt het toekomstige migratiepunt; er bestond geen eerdere persoonlijke-locatieopslag om te migreren.
+- GeoJSON-roundtrips bewaren bronpositie en afzonderlijke eigen analysepunten. Import is vooraf volledig gevalideerd en slaat duplicaten over. Referentie-only providers krijgen geen opgeslagen/geëxporteerde zaakpayload, foto's of automatische bronpositie.
+- Corruptie, onbekende versies, quota en stale-tab-conflicten overschrijven geen geldige records. De laatste geldige geheugenversie blijft exporteerbaar bij latere opslagproblemen.
+- Controles geslaagd: `npm run lint` (Oxlint), `npm test` (138 tests in 17 bestanden) en `npm run build`.
+- Grenzen van het bewijs: opslag is getest met een geïnjecteerde lokale opslagadapter en de selectie met echte parsers/adapters; geen visuele browsercontrole uitgevoerd. Import ondersteunt het eigen versie-1-formaat, niet willekeurige derdepartij-GPX/GeoJSON. De bestaande bundlewaarschuwing blijft aanwezig.
+- Vervolg: F1 levert het ontdekmenu en detailpaneel; F2 levert de gebruikersbediening voor opslaan, eigen punten en import/export.
 
 ### T4 — Restaurantverrijking, openingstijden en afbeeldingen
 

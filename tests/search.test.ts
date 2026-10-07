@@ -29,4 +29,14 @@ describe('locaties zoeken', () => {
     expect(options.signal).toBe(controller.signal);
     await expect(searchPlaces('Groningen', controller.signal)).rejects.toThrow('Photon gaf status 429');
   });
+
+  it('verzint geen OSM-identiteit bij ongeldige geocodermetadata', () => {
+    const results = parseSearchResults({ features: [
+      { geometry: { type: 'Point', coordinates: [6.57, 53.21] }, properties: { name: 'A', osm_type: 'constructor', osm_id: 42 } },
+      { geometry: { type: 'Point', coordinates: [6.57, 53.21] }, properties: { name: 'B', osm_type: 'N', osm_id: true } },
+      { geometry: { type: 'Point', coordinates: [6.57, 53.21] }, properties: { name: 'C', osm_type: 'W', osm_id: { valueOf: 0, toString: 0 } } },
+    ] });
+    expect(results).toHaveLength(3);
+    expect(results.every(result => result.osm === undefined)).toBe(true);
+  });
 });

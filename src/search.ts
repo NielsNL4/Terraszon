@@ -5,6 +5,7 @@ export type SearchResult = {
   label: string;
   detail: string;
   kind: 'street' | 'place' | 'address';
+  osm?: { type: 'node' | 'way' | 'relation'; id: number };
 };
 
 type PhotonFeature = {
@@ -39,7 +40,13 @@ export function parseSearchResults(data: unknown): SearchResult[] {
       .filter((part, index, parts) => part && part !== label && parts.indexOf(part) === index)
       .join(', ');
     const kind = house ? 'address' : street ? 'street' : 'place';
-    return [{ coordinates: [coordinates[0], coordinates[1]] as [number, number], label, detail, kind }];
+    const rawType = text(properties.osm_type);
+    const osmType = rawType === 'N' || rawType === 'node' ? 'node'
+      : rawType === 'W' || rawType === 'way' ? 'way' : rawType === 'R' || rawType === 'relation' ? 'relation' : undefined;
+    const rawId = properties.osm_id;
+    const osmId = typeof rawId === 'number' ? rawId : typeof rawId === 'string' && /^\d+$/.test(rawId) ? Number(rawId) : NaN;
+    const osm: SearchResult['osm'] = osmType && Number.isSafeInteger(osmId) && osmId > 0 ? { type: osmType, id: osmId } : undefined;
+    return [{ coordinates: [coordinates[0], coordinates[1]] as [number, number], label, detail, kind, ...(osm ? { osm } : {}) }];
   });
 }
 

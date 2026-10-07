@@ -82,6 +82,18 @@ Boomdata heeft een ruimtelijke buffer rondom het kaartbeeld en een begrensde geh
 
 Zoekopdrachten gaan naar de publieke Photon-server van komoot. Verzoeken worden vertraagd en bij nieuwe invoer geannuleerd om de dienst te ontzien. De server kan verzoeken beperken of tijdelijk onbereikbaar zijn; in dat geval blijft de kaart bruikbaar. Zoekopdrachten worden naar die externe dienst verstuurd; de browserpositie zelf wordt niet voor zoeken verzonden.
 
+## Locatiemodel en persoonlijke opslag
+
+De technische basis voor locatiebeheer staat in `src/places.ts` en `src/saved-places.ts`. Horeca, gezochte adressen en eigen kaartpunten gebruiken één locatiemodel. OSM-records krijgen een stabiel ID zoals `osm:node/42`; Photon-resultaten behouden hun OSM-identiteit wanneer die beschikbaar is. Adressen zonder bron-ID krijgen een naam-/positie-ID en eigen punten een UUID. De bestaande kaartklik en adreszoeker zijn op dezelfde selectie aangesloten.
+
+Bronpositie en horecagegevens staan los van persoonlijke gegevens: favorietstatus, eigen naam, notitie, type en maximaal acht analysepunten. Een vernieuwde zaaknaam of bronpin overschrijft geen persoonlijke terraspositie of notitie. Kleine persoonlijke records worden lokaal bewaard onder `terraszon:personal-places`, met schema versie 1 en maximaal 500 locaties. Er is geen account of cloudopslag. Gegevens worden pas opgeslagen via een expliciete opslagactie; een kaartklik of zoekselectie schrijft geen favoriet.
+
+De opslagmodule ondersteunt toevoegen, bijwerken, verwijderen, herladen en een versieerbare GeoJSON-roundtrip. Het importformaat is een Terraszon-`FeatureCollection` met `terraszon.version = 1`, puntgeometrie, bronreferenties en persoonlijke metadata. Ongeldige coördinaten, inconsistentie tussen geometrie en record, onbekende versies of een te groot bestand worden geweigerd voordat iets wordt opgeslagen. Duplicaten worden overgeslagen, zodat import geen bestaande notities overschrijft. Algemene GPX- of andere GeoJSON-formaten zijn nog geen ondersteund importformaat.
+
+Opslagfouten worden teruggegeven; er is geen onzichtbaar tijdelijk "opgeslagen" resultaat. Beschadigde of onbekende opslagversies worden behouden. De laatste geldige geheugenversie kan bij latere opslagproblemen worden geëxporteerd. Een optimistische controle op de laatst gelezen opslagwaarde herkent wijzigingen uit een ander tabblad; dit is geen synchronisatie tussen apparaten. Bij toekomstige beperkte providers bevat de persoonlijke collectie alleen bron-ID's en eigen gegevens: hun zaakdetails, foto's en broncoördinaten worden niet automatisch opgeslagen of geëxporteerd. Open bronverwijzingen en, waar relevant, OSM-attributie blijven wel aanwezig.
+
+Deze onderlaag wordt gebruikt voor het ontdekmenu in F1 en de bediening voor Mijn plekken, toevoegen en import/export in F2; zie [de roadmap](./ROADMAP.md).
+
 ## Nauwkeurigheid en beperkingen
 
 - De geselecteerde tijd gebruikt de tijdzone van de browser. Bij een kaartlocatie in een andere tijdzone moet de gebruiker dit verschil zelf meenemen.
