@@ -22,7 +22,7 @@ De kaart is het primaire werkvlak, op desktop en mobiel. Gebruikers zoeken een a
 
 - Statische, Nederlandstalige browserapp; berekeningen draaien lokaal.
 - Datum/tijd, locatiezoeken, browserlocatie, horeca en indicatieve gebouw-/boomschaduw zijn aanwezig.
-- Persoonlijke locaties blijven lokaal zonder account. T3 levert het model en de opslag; F2 levert de gebruikersbediening.
+- Persoonlijke locaties blijven lokaal zonder account. Mijn plekken biedt opslaan, eigen punten, naam/type/notitie, bewerken/verwijderen en handmatige GeoJSON-import/export.
 - Gratis databronnen eerst. Restaurantfoto's en aanvullende providers volgen in T4/F3; datadekking moet worden gecontroleerd.
 - Het geplande zonrapport bevat dagelijkse zonduur en een maand-/seizoensvergelijking, naar de aangeleverde Coffee in the Sun-referentie.
 - Zon volgens de geometrie is geen weersvoorspelling. Boomafscherming is een schatting; onbekende data moet herkenbaar blijven.
@@ -31,7 +31,7 @@ De kaart is het primaire werkvlak, op desktop en mobiel. Gebruikers zoeken een a
 
 ## Brand Commitments
 
-De naam Terraszon en Nederlandse bediening blijven behouden. F1 breidt de bestaande kaartinterface uit binnen de aanwezige stijl.
+De naam Terraszon en Nederlandse bediening blijven behouden. Ontdekken en persoonlijke locatiebediening breiden de bestaande kaartinterface uit binnen de aanwezige stijl.
 
 ## Evidence on Hand
 

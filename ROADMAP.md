@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3 en F1 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, F1 en F2 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -39,7 +39,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3 en F1 zijn uitgevoerd en gec
 | T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Open, later |
 | T8 | Nederlandse databronnen en hoogteverrijking | Evaluatie T7 | Open, later |
 | F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Afgerond — 7 oktober 2026 |
-| F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Open |
+| F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Afgerond — 7 oktober 2026 |
 | F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Open |
 | F4 | Dagzonrapport voor iedere locatie | T5, F1 | Open |
 | F5 | Jaaroverzicht en dagdeelgrafieken | F4 | Open |
@@ -262,6 +262,18 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Opslag- en importfouten geven bruikbare feedback zonder bestaande plekken te wissen.
 
 **Commit:** `Add saved places and custom map locations`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- Mijn plekken toegevoegd, met opslaan vanuit lijst/details, zoeken in alle persoonlijke namen/notities, bewerken en verwijderen met ongedaan maken. Het paneel blijft standaard gesloten en de opslag blijft lokaal zonder account.
+- Formulier voor naam, type en notitie plus positie via Photon-adres, echte kaartklik, draggable pin en coördinaten. Kaartverversingen behouden de invoer. Escape/annuleren schrijft niets; bewaren meldt alleen succes na een geslaagde lokale write.
+- Horecabronpin en persoonlijk zitpunt blijven gescheiden; extra analysepunten en stabiele ID's blijven behouden. Eigen/adres-/verplaatste punten krijgen herkenbare persoonlijke kaartmarkers, geen verzonnen openbare horecagegevens.
+- Downloadbare GeoJSON-export, gevalideerde import, duplicaatrapportage en duidelijke import-/opslagfeedback aangesloten op het versie-1-model. Wijzigingen uit een ander tabblad worden tijdens een concept niet stil ingelezen of overschreven.
+- Controles geslaagd: `npm run lint` (Oxlint), `npm test` (153 tests in 19 bestanden) en `npm run build`.
+- Native Chromium/MapLibre-flow geslaagd: bronplek bewaren, persoonlijk bronpunt bewerken, eigen plek via adres/kaartklik/drag toevoegen, bewaren, herladen, bestaande eigen plek opnieuw bewerken, export, delete/undo, geldige herstelimport, duplicaten/ongeldige JSON, Escape/annuleren en quota-fout met behouden invoer en geslaagde retry.
+- Layoutchecks op 1366×900, 390×844, 320×740, 844×390 en gesimuleerd 390×400-toetsenbordviewport: geen overlap/veldoverflow, volledig eerste opgeslagen rij direct na save, focus terug op de opgeslagen rij en leesbare ingedrukte Bewaren-knop.
+- Vijf visuele reviewpunten opgelost: mobiele lijsthoogte, complete editorinstructie, opgeslagen-rijfocus, primaire active-kleur en herstelgerichte importfout. De reviewer gaf `ship` voor deze vijf gescoorde fixes. Detector gaf alleen palet-/radiusadviezen; nieuwe F2-waarden zijn gedocumenteerd, bestaande kaartkleur-drift is niet als zijtaak aangepast.
+- Bewijsgrenzen: herkenbare synthetische testdata en gesimuleerde schaduwstatus; echte MapLibre/OpenFreeMap-weergave. Geen gemeten zonnauwkeurigheid, FPS-benchmark of volledige assistieve-technologieaudit. De bestaande kaartbundlewaarschuwing blijft aanwezig.
+- Volgende bouwfase volgens de roadmap: T4, restaurantverrijking, openingstijden en afbeeldingen, gevolgd door F3.
 
 ### F3 — Rijke locatiedetails, foto's en basisfilters
 

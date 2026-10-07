@@ -92,6 +92,18 @@ Op desktop staat het paneel links onder de zoekbalk. Op mobiel staat het boven e
 
 Eerder geladen plekken blijven bij vernieuwingsfouten beschikbaar, met een herstelactie. Lage zoom, uitgeschakelde horeca, lege gebieden en niet gevonden namen hebben eigen uitleg. Een adres of verplaatst persoonlijk punt krijgt niet automatisch de zonstatus van een horecapin: ontbrekende of mislukte berekeningen worden als onbekend weergegeven.
 
+## Mijn plekken en eigen locaties
+
+**Opslaan** bewaart een gevonden horeca- of adresplek op dit apparaat. Dit kan vanuit een locatieregel of de details. Via **Mijn plekken** vind je opgeslagen en zelf toegevoegde plekken terug, ook buiten het huidige kaartgebied. Zoeken in deze verzameling gebruikt namen en persoonlijke notities; de openbare horecalaag en Alleen-zon-filter beperken deze persoonlijke lijst niet.
+
+**Toevoegen** opent een formulier voor naam, type en optionele notitie. De beginpositie is een voorstel rond het kaartcentrum. Kies de gewenste positie via adreszoeken, een klik op de kaart, het slepen van de groene pin of breedte-/lengtegraad. Het formulier blijft behouden terwijl de kaart beweegt en nieuwe gegevens binnenkomen. **Bewaren** schrijft pas na validatie naar lokale opslag; **Annuleren** of Escape vanuit het formulier slaat niets op. De gewone adreszoeker kan tijdens bewerken eveneens de conceptpin verplaatsen.
+
+**Bewerken** past persoonlijke gegevens en het eerste analysepunt aan. Bij horeca blijft de oorspronkelijke bronpin apart bewaard; eventuele extra analysepunten blijven behouden. Eigen locaties krijgen een persoonlijke groene kaartmarkering en worden niet als openbare of bevestigde horecalocatie voorgesteld. Vanuit de kaart en Mijn plekken opent dezelfde selectie. **Verwijderen** verwijdert een plek; de daaropvolgende melding biedt **Ongedaan maken** zolang die actie beschikbaar blijft.
+
+**Export** downloadt een Terraszon-GeoJSON-bestand met persoonlijke plekken en notities. **Import** leest dit eigen versie-1-formaat en slaat bestaande ID's over; bestaande notities worden niet vervangen. Een bestand boven 32 MB wordt vóór het lezen geweigerd; de bestaande inhouds- en recordvalidatie blijft gelden. Importfouten benoemen zowel de oorzaak als een herstelactie en behouden bestaande plekken. Een opslagquota-fout houdt de formulierinvoer vast zodat opnieuw bewaren mogelijk is. Een wijziging uit een ander tabblad tijdens bewerken overschrijft geen concept: de gebruiker kan expliciet annuleren en opnieuw laden.
+
+Er is geen account, serveropslag of automatische synchronisatie. Export/import is de handmatige manier om een kopie over te zetten. Gewone succesmeldingen verdwijnen na vier seconden; fouten en acties zoals Ongedaan maken blijven staan totdat ze worden vervangen of het paneel wordt gesloten.
+
 ## Locatiemodel en persoonlijke opslag
 
 De technische basis voor locatiebeheer staat in `src/places.ts` en `src/saved-places.ts`. Horeca, gezochte adressen en eigen kaartpunten gebruiken één locatiemodel. OSM-records krijgen een stabiel ID zoals `osm:node/42`; Photon-resultaten behouden hun OSM-identiteit wanneer die beschikbaar is. Adressen zonder bron-ID krijgen een naam-/positie-ID en eigen punten een UUID. De bestaande kaartklik en adreszoeker zijn op dezelfde selectie aangesloten.
@@ -102,7 +114,7 @@ De opslagmodule ondersteunt toevoegen, bijwerken, verwijderen, herladen en een v
 
 Opslagfouten worden teruggegeven; er is geen onzichtbaar tijdelijk "opgeslagen" resultaat. Beschadigde of onbekende opslagversies worden behouden. De laatste geldige geheugenversie kan bij latere opslagproblemen worden geëxporteerd. Een optimistische controle op de laatst gelezen opslagwaarde herkent wijzigingen uit een ander tabblad; dit is geen synchronisatie tussen apparaten. Bij toekomstige beperkte providers bevat de persoonlijke collectie alleen bron-ID's en eigen gegevens: hun zaakdetails, foto's en broncoördinaten worden niet automatisch opgeslagen of geëxporteerd. Open bronverwijzingen en, waar relevant, OSM-attributie blijven wel aanwezig.
 
-Het ontdekmenu gebruikt deze onderlaag. F2 voegt de gebruikersbediening voor Mijn plekken, toevoegen en import/export toe; zie [de roadmap](./ROADMAP.md).
+Het ontdekmenu en Mijn plekken gebruiken deze onderlaag; zie [de roadmap](./ROADMAP.md).
 
 ## Nauwkeurigheid en beperkingen
 

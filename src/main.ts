@@ -18,8 +18,9 @@ import { applyTerraceStatuses, fetchTerraces } from './terraces';
 import { bufferedTreeBounds, createTreeViewLoader, treeDataKey } from './tree-loader';
 import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
 import { overpassScheduler } from './overpass';
-import { addressPlace, createPlaceSelection, terracePlace } from './places';
-import { createSavedPlacesStore } from './saved-places';
+import { addressPlace, createPlaceSelection, resolveSavedPlace, terracePlace } from './places';
+import { createSavedPlacesStore, PLACES_STORAGE_KEY } from './saved-places';
+import { personalMapPoints } from './personal-places';
 import { createPlacePanel } from './place-panel';
 import type { DiscoveryContext } from './discovery';
 import type { Place, PlaceCoordinates } from './places';
@@ -241,9 +242,20 @@ let terraceStatusesPending = true;
 let terraceStatusUnavailable = false;
 let userCoordinates: PlaceCoordinates | null = null;
 let selectionOrigin: HTMLElement | undefined;
+let draftCoordinates: PlaceCoordinates | null = null;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 
 const placePanel = createPlacePanel(placePanelElement, {
+  store: savedPlaces,
+  getMapCenter() { const center = terraceMap.map.getCenter(); return [center.lng, center.lat]; },
+  onPointEditing(coordinates) {
+    const entering = !draftCoordinates && coordinates;
+    draftCoordinates = coordinates;
+    terraceMap.setPointPicking(coordinates);
+    terraceMap.setSelectedPlace(coordinates ? null : placeSelection.get()?.analysisPoint.coordinates ?? null);
+    if (entering) centerDraftPoint();
+  },
+  onFocusMap() { centerDraftPoint(); terraceMap.map.getCanvas().focus({ preventScroll: true }); },
   trigger: discoverButton,
   onSelect: (place, origin) => selectPlace(place, origin),
   onClear: () => placeSelection.select(null),
@@ -260,6 +272,10 @@ const placePanel = createPlacePanel(placePanelElement, {
   },
   onShowOnMap: () => centerSelectedPlace(),
 });
+
+function centerDraftPoint(): void {
+  if (draftCoordinates) terraceMap.map.flyTo({ center: draftCoordinates, zoom: Math.max(15.5, terraceMap.map.getZoom()), offset: mapTargetOffset(), essential: true });
+}
 
 function refreshDiscovery(): void {
   const center = terraceMap.map.getCenter();
@@ -289,7 +305,7 @@ function selectPlace(place: Place, origin: HTMLElement, zoom?: number): void {
 }
 
 placeSelection.subscribe(selected => {
-  terraceMap.setSelectedPlace(selected?.analysisPoint.coordinates ?? null);
+  terraceMap.setSelectedPlace(placePanel.isEditing() ? null : selected?.analysisPoint.coordinates ?? null);
   placePanel.setSelection(selected, selectionOrigin);
 });
 
@@ -558,6 +574,14 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onPlaceSelect(place) { selectPlace(place, terraceMap.map.getCanvas()); },
+  onPointPick(coordinates) { placePanel.setDraftCoordinates(coordinates); },
+  onPersonalPlaceSelect(id) {
+    const record = savedPlaces.get(id);
+    if (!record) return;
+    const feature = terraces.find(value => `osm:${value.properties.osmType}/${value.properties.osmId}` === id);
+    const place = resolveSavedPlace(record, feature ? terracePlace(feature) : undefined);
+    if (place) selectPlace(place, terraceMap.map.getCanvas());
+  },
   onBuildings(nextBuildings, capped) {
     buildings = nextBuildings;
     updateObstacles(true, terraceMap.map.getZoom() < 14);
@@ -595,6 +619,13 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     showNotice('Een deel van de kaarttegels kon niet laden. Probeer opnieuw te bewegen of in te zoomen.');
   },
 });
+const updatePersonalPlaces = () => {
+  terraceMap.setPersonalPlaces(personalMapPoints(savedPlaces.list()));
+  const selected = placeSelection.get();
+  if (selected && !placePanel.isEditing()) placeSelection.refresh(selected.place);
+};
+savedPlaces.subscribe(updatePersonalPlaces);
+updatePersonalPlaces();
 refreshDiscovery();
 
 retryBuildings.addEventListener('click', () => {
@@ -605,6 +636,9 @@ retryBuildings.addEventListener('click', () => {
 
 window.addEventListener('storage', (event) => {
   if (event.key === PALETTE_STORAGE_KEY || event.key === null) terraceMap.refreshBuildingPalette();
+  if (event.key === PLACES_STORAGE_KEY || event.key === null) {
+    if (placePanel.isEditing()) placePanel.externalChange(); else savedPlaces.reload();
+  }
 });
 window.addEventListener('terraszon:palette-change', () => terraceMap.refreshBuildingPalette());
 window.addEventListener('pageshow', () => terraceMap.refreshBuildingPalette());
@@ -644,6 +678,7 @@ function selectSearchResult(result: SearchResult): void {
   searchMatches = [];
   closeSearch();
   searchInput.blur();
+  if (placePanel.acceptAddress(result)) return;
   selectPlace(addressPlace(result), searchInput, result.kind === 'place' ? 14 : 16);
 }
 
@@ -720,7 +755,7 @@ searchInput.addEventListener('keydown', (event) => {
 });
 
 searchInput.addEventListener('focus', () => {
-  if (placePanel.isOpen()) placePanel.close(false);
+  if (placePanel.isOpen() && !placePanel.isEditing()) placePanel.close(false);
   if (searchMatches.length) renderSearchResults();
 });
 document.addEventListener('pointerdown', (event) => {

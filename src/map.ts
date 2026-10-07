@@ -28,6 +28,8 @@ const COLORED_BUILDING_LAYER = 'terraszon-building-3d';
 const SHADOW_LAYER = 'terraszon-shadows';
 const TERRACE_SOURCE = 'terraszon-terraces';
 const TERRACE_LAYER = 'terraszon-terraces';
+const PERSONAL_SOURCE = 'terraszon-personal-places';
+const PERSONAL_LAYER = 'terraszon-personal-places';
 const TREE_SOURCE = 'terraszon-trees';
 const TREE_MARKER_SOURCE = 'terraszon-tree-points';
 const TREE_LAYER = 'terraszon-trees';
@@ -59,6 +61,8 @@ type MapCallbacks = {
   onMapReady?: () => void;
   onBuildingError?: (message: string) => void;
   onPlaceSelect?: (place: Place) => void;
+  onPersonalPlaceSelect?: (id: string) => void;
+  onPointPick?: (coordinates: [number, number]) => void;
 };
 
 export type TerraceMap = {
@@ -69,6 +73,8 @@ export type TerraceMap = {
   setTreeDate: (date: string) => void;
   setUserLocation: (coordinates: [number, number] | null) => void;
   setSelectedPlace: (coordinates: [number, number] | null) => void;
+  setPersonalPlaces: (points: Array<{ id: string; name: string; coordinates: [number, number] }>) => void;
+  setPointPicking: (coordinates: [number, number] | null) => void;
   setBuildings: (buildings: CategorizedBuilding[] | null) => void;
   loadBuildings: (bounds: ViewBounds, mobile: boolean, signal: AbortSignal, progress: (data: BuildingSummary) => void) => Promise<BuildingSummary>;
   refreshBuildingPalette: () => void;
@@ -158,6 +164,12 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
   let treeDate = '';
   let userLocationMarker: Marker | null = null;
   let selectedPlaceMarker: Marker | null = null;
+  let editMarker: Marker | null = null, picking = false;
+  let personalPoints: Array<{ id: string; name: string; coordinates: [number, number] }> = [];
+  const personalData = () => ({ type: 'FeatureCollection' as const, features: personalPoints.map(point => ({
+    type: 'Feature' as const, id: point.id, properties: { id: point.id, name: point.name },
+    geometry: { type: 'Point' as const, coordinates: point.coordinates },
+  })) });
   let knownBuildings = false;
   let buildingSourceActive = false;
   let geometryDirty = false;
@@ -175,7 +187,13 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       map.triggerRepaint();
     }
   });
-  map.on('remove', () => { buildingClient.destroy(); selectedPlaceMarker?.remove(); userLocationMarker?.remove(); });
+  map.on('remove', () => { buildingClient.destroy(); selectedPlaceMarker?.remove(); userLocationMarker?.remove(); editMarker?.remove(); });
+  map.on('click', event => {
+    if (!picking) return;
+    const point = event.lngLat.wrap();
+    const coordinates: [number, number] = [point.lng, point.lat];
+    editMarker?.setLngLat(coordinates); callbacks.onPointPick?.(coordinates);
+  });
   let onlySunny = false;
   let sunState = { altitude: 0, azimuth: 0, daylight: false };
   const visibility = { buildings: true, shadows: true, terraces: true, trees: true };
@@ -411,9 +429,21 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       },
     });
 
-    map.on('mouseenter', TERRACE_LAYER, () => { map.getCanvas().style.cursor = 'pointer'; });
-    map.on('mouseleave', TERRACE_LAYER, () => { map.getCanvas().style.cursor = ''; });
+    map.addSource(PERSONAL_SOURCE, { type: 'geojson', data: personalData() });
+    map.addLayer({ id: PERSONAL_LAYER, type: 'circle', source: PERSONAL_SOURCE, paint: {
+      'circle-radius': 6, 'circle-color': '#365744', 'circle-stroke-color': '#fffdf7', 'circle-stroke-width': 2,
+    } });
+    map.on('mouseenter', PERSONAL_LAYER, () => { if (!picking) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', PERSONAL_LAYER, () => { if (!picking) map.getCanvas().style.cursor = ''; });
+    map.on('click', PERSONAL_LAYER, event => {
+      if (picking) return;
+      const feature = map.queryRenderedFeatures(event.point, { layers: [PERSONAL_LAYER] })[0];
+      if (feature) callbacks.onPersonalPlaceSelect?.(String(feature.properties.id));
+    });
+    map.on('mouseenter', TERRACE_LAYER, () => { if (!picking) map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', TERRACE_LAYER, () => { if (!picking) map.getCanvas().style.cursor = ''; });
     map.on('click', TERRACE_LAYER, (event: MapMouseEvent) => {
+      if (picking || map.queryRenderedFeatures(event.point, { layers: [PERSONAL_LAYER] }).length) return;
       const feature = map.queryRenderedFeatures(event.point, { layers: [TERRACE_LAYER] })[0];
       if (!feature || feature.geometry.type !== 'Point') return;
       const properties = feature.properties;
@@ -532,6 +562,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       shadowBuildingsDirty = true;
       const terraceSource = map.getSource(TERRACE_SOURCE) as GeoJSONSource | undefined;
       terraceSource?.setData({ type: 'FeatureCollection', features: terraceData });
+      (map.getSource(PERSONAL_SOURCE) as GeoJSONSource | undefined)?.setData(personalData());
       const treeSource = map.getSource(TREE_SOURCE) as GeoJSONSource | undefined;
       treeSource?.setData({ type: 'FeatureCollection', features: treeData });
       const treeMarkerSource = map.getSource(TREE_MARKER_SOURCE) as GeoJSONSource | undefined;
@@ -579,6 +610,18 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
 
   return {
     map,
+    setPersonalPlaces(points) { personalPoints = points; (map.getSource(PERSONAL_SOURCE) as GeoJSONSource | undefined)?.setData(personalData()); },
+    setPointPicking(coordinates) {
+      picking = coordinates !== null; map.getCanvas().style.cursor = picking ? 'crosshair' : '';
+      if (!coordinates) { editMarker?.remove(); editMarker = null; map.doubleClickZoom.enable(); return; }
+      map.doubleClickZoom.disable();
+      if (!editMarker) {
+        const element = document.createElement('div'); element.className = 'editable-place-marker';
+        element.setAttribute('role', 'img'); element.setAttribute('aria-label', 'Persoonlijk punt dat je bewerkt');
+        editMarker = new maplibregl.Marker({ element, anchor: 'center', draggable: true }).setLngLat(coordinates).addTo(map);
+        editMarker.on('dragend', () => { const point = editMarker!.getLngLat().wrap(); callbacks.onPointPick?.([point.lng, point.lat]); });
+      } else editMarker.setLngLat(coordinates);
+    },
     setSelectedPlace(coordinates) {
       if (!coordinates) { selectedPlaceMarker?.remove(); selectedPlaceMarker = null; return; }
       if (!selectedPlaceMarker) {
