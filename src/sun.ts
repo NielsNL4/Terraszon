@@ -5,7 +5,10 @@ export function dateAtMinutes(dateValue: string, minutes: number): Date {
   const [year, month, day] = dateValue.split('-').map(Number);
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  return new Date(year, month - 1, day, hours, mins, 0, 0);
+  const date = new Date(0);
+  date.setFullYear(year, month - 1, day);
+  date.setHours(hours, mins, 0, 0);
+  return date;
 }
 
 export function getSunState(date: Date, latitude: number, longitude: number): SunState {

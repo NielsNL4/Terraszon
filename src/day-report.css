@@ -44,11 +44,30 @@
 .day-report-point-form label { display: block; min-width: 0; font-size: 12px; font-weight: 600; }
 .day-report-point-form input { display: block; width: 100%; min-width: 0; margin-top: 5px; padding: 9px 10px; border: 1px solid #dedbd2; border-radius: 8px; background: #fffefb; color: #20231f; font: inherit; font-weight: 400; }
 .day-report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.place-panel.has-day-report { overflow: clip; }
+.year-report { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e6e2d9; }
+.year-report-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.year-report-toolbar label { display: grid; gap: 5px; color: #62665f; font-size: 12px; }
+.year-report-toolbar input { width: 90px; min-height: 40px; padding: 8px 10px; border: 1px solid #dedbd2; border-radius: 8px; color: #20231f; background: #fffefb; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; }
+.year-report-error { color: #8c342a; }
+.year-report h4 { margin: 20px 0 8px; color: #30322e; font-size: 12px; font-weight: 650; }
+.report-date-chart { padding: 0; margin: 0; list-style: none; }
+.report-date-chart li + li { border-top: 1px solid #e6e2d9; }
+.report-chart-row { display: grid; grid-template-columns: minmax(0, 84px) minmax(30px, 1fr) minmax(0, 88px); align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 2px; border: 0; border-radius: 0; color: #30322e; background: transparent; text-align: left; font-weight: 400; }
+.report-chart-row:hover { background: #f2ede0; }
+.report-chart-date { font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.report-chart-date span, .report-chart-value span { display: block; margin-top: 3px; color: #62665f; font-size: 11px; line-height: 1.4; font-weight: 400; }
+.report-chart-value { min-width: 0; text-align: right; font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.report-chart-bar { display: flex; height: 12px; overflow: hidden; border-radius: 3px; background: #f2ede0; }
+.report-part-chart { margin: 12px 0; }
+.report-part-chart dt { margin-top: 14px; color: #30322e; font-size: 12px; font-weight: 650; }
+.report-part-chart dd { display: grid; gap: 6px; margin: 7px 0 0; color: #62665f; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 @media (max-width: 680px), (max-height: 500px) and (pointer: coarse) {
   .place-panel.has-day-report { height: min(460px, max(220px, calc(var(--visible-height, 100dvh) - 360px))); }
   .day-report-header .place-action, .day-report-disclosure summary { min-height: 44px; }
   .day-report-disclosure summary { align-content: center; }
   .day-report-point-form input { font-size: 16px; min-height: 44px; }
+  .year-report-toolbar input { font-size: 16px; min-height: 44px; }
   .day-report-time { height: 44px; margin-top: -29px; }
   .shell.has-keyboard .place-panel.has-day-report { height: min(330px, max(160px, calc(var(--visible-height, 100dvh) - 160px))); }
 }

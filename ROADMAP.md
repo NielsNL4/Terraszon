@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1, F2 en F4 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1, F2, F4 en F5 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -42,7 +42,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1, F2 en F4 zijn u
 | F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Afgerond — 7 oktober 2026 |
 | F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Geparkeerd op gebruikersverzoek |
 | F4 | Dagzonrapport voor iedere locatie | T5, F1 | Afgerond — 7 oktober 2026 |
-| F5 | Jaaroverzicht en dagdeelgrafieken | F4 | Open |
+| F5 | Jaaroverzicht en dagdeelgrafieken | F4 | Afgerond — 7 oktober 2026 |
 | F6 | Selecteren op zonneduur en deelbare locaties | F2, F3, F4; evaluatie T6 | Open, later |
 
 ## Aanbevolen bouwvolgorde
@@ -368,6 +368,20 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Grafieken hebben tekstuele waarden en toetsenbordbediening.
 
 **Commit:** `Add annual sun charts and seasonal comparisons`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- Jaaroverzicht op aanvraag toegevoegd onder het dagrapport, met twaalf maanddagen op de 15e en afzonderlijk 21 maart, juni, september en december. Methode en werkelijk gebruikte datums blijven expliciet zichtbaar; geen maandgemiddelden of claim dat de 21e altijd de astronomische seizoensgrens is.
+- Horizontale maand-/seizoensgrafieken met gezamenlijke, op hele uren afgeronde schaal (minimaal één uur), leesbare duurwaarden en native datumknoppen. Directe zon, mogelijk gefilterd licht en onbekende tijd blijven afzonderlijk; schaduw/nacht staan niet in de balksom. Nul zon, gedeeltelijke data en fouten hebben eigen uitleg.
+- Uitklapbare dagdeelgrafiek aangesloten op de bestaande rapporttotalen: ochtend vóór 12:00, middag 12:00–17:00, avond daarna, in browsertijd. Iedere jaarrij opent exact het bijbehorende dagrecord en dezelfde dagdeelwaarden, zonder nieuwe workerjob; kaartdatum en toetsenbordfocus volgen de keuze.
+- Dag en jaar delen één lazy worker en obstakel-/dagcache. Het bestaande dagrapport blijft bruikbaar tijdens jaarwerk. Nieuwe dagberekening onderbreekt lopend jaarwerk; generatie-/abortguards weren late oude uitkomsten. Jaar/punt/bomenwijzigingen wissen jaarresultaten en rekenen alleen op expliciete aanvraag. Handmatig jaar blijft behouden bij kaart-/tijdupdates; verborgen resultaten worden alleen vóór expiry hergebruikt. Revisionverschillen worden gesynchroniseerd of ongeldig gemaakt.
+- Bediening hersteld voor input-naar-actiecontinuïteit: jaarinvoer wordt vóór blur verwerkt, zodat typen en één klik op Berekenen werkt; ongeldig jaar start geen aanvraag. Coördinatenpreview verwerkt input vóór de toepasklik. De geopende rapportcontainer gebruikt overflow-clip zodat native scroll/focus de vaste paneelkop niet kan wegscrollen; maandnamen hebben voldoende kolombreedte.
+- De lokale klokhelper behoudt ook gekozen jaren onder 100, in plaats van de impliciete JavaScript-1900-offset. Een regressie controleert jaar 4 inclusief 29 februari en 23:59, plus jaar 99.
+- Eindchecks geslaagd: `npm run lint` (Oxlint), `npm test` (219 tests in 28 bestanden), `npm run build` en `git diff --check`. Nieuwe tests dekken on-demand jaarlifecycle, cache-expiry, handmatig jaar, punt-/instellingeninvalidatie, abort/late replies, herstel, overnemen/afwijzen van voorbereide dagen, schaal-/onzekerheidstekst en dagdeelinvarianten in een echt berekend schrikkeljaar.
+- Chromium-browserflows geslaagd met herkenbare synthetische Test-locatie en gecontroleerde workerreports: jaar pas op aanvraag, bruikbaar dagrapport/tijdlijn tijdens jaarwerk, maand-/seizoenskeuze met identieke dagdelen zonder extra job, jaar typen/daarna klikken, ongeldig jaar, annulering, datumwissel tijdens jaarwerk, late replies, fout/herstel, onvolledigheid/revisions, geen zon en puntwissel.
+- Desktop-/mobielcontrole op 1366×900, 390×844, 320×740 en 844×390: grafieken binnen het scrollbare paneel, geen pagina-/grafiek-overflow of overlap met kaartklok, vaste paneelkop zichtbaar. Korte schermen vragen scrollen vóór de datarijen; context, methode en schaal blijven leesbaar.
+- Native productieflow onder `/Terraszon/` geslaagd: één echte gedeelde rapportworker, één dagjob plus jaarjobs voor 2024 en 2025 (ieder 16 dagen), alle dagdeeltotalen sluiten aan op de dagduur, geen extra jobs bij maand-/seizoensdagselectie, jaar typen en direct Berekenen werkt. Bronresponses zijn synthetische volledige leegte; renderer, SunCalc, worker en netwerkbroker zijn echt.
+- Mechanische detector: geen bevindingen. Onafhankelijke finish-review vond één materieel herstelpunt bij jaarinvoer/blur; de verdict-pass scoorde dit opgelost en gaf `ship` voor die fix. Documentatiecontrole bevestigde behoud van de bestaande visuele wereld; DESIGN.md en sidecar zijn behouden.
+- Bewijsgrenzen: geen praktijkzonvalidatie, benchmark of volledige assistieve-technologieaudit. Model-/weer-/bronbeperkingen van T5/F4 blijven van toepassing. De bestaande grote-bundlewaarschuwing blijft aanwezig. Volgende fase volgens de aangepaste volgorde: T6, gemeten verwerking- en cacheoptimalisatie.
 
 ### F6 — Selecteren op zonneduur en deelbare locaties
 

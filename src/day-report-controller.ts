@@ -27,7 +27,14 @@ export function createDayReportController(client: Client, changed: (state: DayRe
   };
   return {
     get: () => state,
-    setContext(next: DayReportContext | null) {
+    setContext(next: DayReportContext | null, prepared?: DaySunReport) {
+      const matches = next && prepared && prepared.date === next.date && prepared.target.id === next.target.id
+        && JSON.stringify(prepared.target.coordinates) === JSON.stringify(next.target.coordinates)
+        && prepared.settings.includeTrees === next.includeTrees && prepared.settings.timeZone === Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (matches) {
+        key = JSON.stringify(next); context = structuredClone(next); stop();
+        publish({ expanded: true, phase: 'ready', report: prepared }); return;
+      }
       const nextKey = JSON.stringify(next); if (nextKey === key) return;
       key = nextKey; context = next ? structuredClone(next) : null;
       stop(); publish({ expanded: !!next && state.expanded, phase: 'idle' }); run();

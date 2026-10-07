@@ -11,6 +11,13 @@ describe('sun helpers', () => {
     expect(date.getMinutes()).toBe(35);
   });
 
+  it('houdt jaren onder 100 en hun schrikkeldag gelijk aan het gekozen rapportjaar', () => {
+    const date = dateAtMinutes('0004-02-29', 1439);
+    expect(date.getFullYear()).toBe(4); expect(date.getMonth()).toBe(1); expect(date.getDate()).toBe(29);
+    expect(date.getHours()).toBe(23); expect(date.getMinutes()).toBe(59);
+    expect(dateAtMinutes('0099-07-15', 720).getFullYear()).toBe(99);
+  });
+
   it('reports daylight around midsummer noon in Groningen', () => {
     const state = getSunState(new Date(2026, 5, 21, 12), 53.2194, 6.5665);
     expect(state.isDaylight).toBe(true);

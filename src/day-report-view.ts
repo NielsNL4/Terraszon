@@ -4,6 +4,10 @@ import { reportClock, reportDuration, reportLimitations, reportStateLabels, repo
 import { sunAvailability } from './sun-report-engine';
 import { getSunState } from './sun';
 import { placeCoordinates, type PlaceCoordinates, type PlaceSelection } from './places';
+import { createYearReportController } from './year-report-controller';
+import { createYearReportView } from './year-report-view';
+import { dayPartChart } from './report-charts';
+import type { DaySunReport } from './sun-report-protocol';
 
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string) => {
   const element = document.createElement(tag); element.className = className; if (text !== undefined) element.textContent = text; return element;
@@ -15,6 +19,7 @@ export function createDayReportView(options: {
   onPicking: (coordinates: PlaceCoordinates | null) => void;
   onApplyPoint: (coordinates: PlaceCoordinates) => void;
   onFocusMap: () => void;
+  onDate: (report: DaySunReport) => void;
 }) {
   const element = node('section', 'day-report'); element.setAttribute('aria-label', 'Dagzonrapport');
   const live = node('p', 'place-announcement'); live.setAttribute('role', 'status'); live.setAttribute('aria-live', 'polite'); live.setAttribute('aria-atomic', 'true');
@@ -61,7 +66,7 @@ export function createDayReportView(options: {
     options.onExpanded(state.expanded);
     if (!selection) return;
     const header = node('div', 'day-report-header'); header.append(node('h3', '', 'Zon op dit zitpunt'));
-    if (state.expanded) header.append(button('Verberg', () => { endPicking(); controller.close(); }, 'hide'));
+    if (state.expanded) header.append(button('Verberg', () => { endPicking(); yearController.close(); controller.close(); }, 'hide'));
     content.append(header);
     if (!state.expanded) {
       content.append(node('p', 'day-report-note', 'Een adres- of horecapin is niet automatisch de plek waar je zit.'),
@@ -119,6 +124,7 @@ export function createDayReportView(options: {
         item.append(choose); list.append(item);
       }
       periods.append(list); content.append(periods);
+      const parts = details('Zon per dagdeel', 'parts'); parts.append(dayPartChart(report)); content.append(parts);
       const solar = details('Zonhoogte en richting', 'solar'); solarText = node('p', 'day-report-note'); solar.append(solarText); content.append(solar);
       const explanation = details('Data en modelbeperkingen', 'data');
       const notes = node('ul', 'day-report-notes'); for (const note of reportLimitations(report)) notes.append(node('li', '', note));
@@ -141,7 +147,9 @@ export function createDayReportView(options: {
       const feedback = node('p', 'day-report-note'); feedback.setAttribute('role', 'status');
       const parse = () => placeCoordinates([Number(longitude!.value.trim().replace(',', '.')), Number(latitude!.value.trim().replace(',', '.'))]);
       const change = () => { try { if (!longitude!.value.trim() || !latitude!.value.trim()) throw new Error('Vul beide coördinaten in.'); picking = parse(); options.onPicking(picking); feedback.textContent = 'Kaartpin bijgewerkt; kies Gebruik dit punt om toe te passen.'; } catch { feedback.textContent = 'Vul geldige coördinaten in (breedte −90 tot 90, lengte −180 tot 180).'; } };
-      latitude.addEventListener('change', change); longitude.addEventListener('change', change);
+      // Preview while typing; a blur-time map update can detach the panel
+      // between pointerdown and the Apply button's native submit click.
+      latitude.addEventListener('input', change); longitude.addEventListener('input', change);
       if (draft) { latitude.value = draft[0]; longitude.value = draft[1]; }
       const actions = node('div', 'day-report-actions'), apply = node('button', 'place-action place-action-primary', 'Gebruik dit punt'); apply.type = 'submit'; apply.dataset.focusKey = 'report:apply-point';
       actions.append(apply, button('Annuleren', () => { endPicking(); render(controller.get()); element.querySelector<HTMLButtonElement>('[data-focus-key="report:point"]')?.focus(); }, 'cancel-point'), button('Toon kaartpin', options.onFocusMap, 'focus-map'));
@@ -150,21 +158,36 @@ export function createDayReportView(options: {
       }); point.append(form);
     }
     content.append(point);
+    if (report && yearController.get().report && yearController.get().report!.revision !== report.revision) yearController.invalidate();
+    yearView.render(); content.append(yearView.element);
     if (focused) (element.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focused)}"]`) ?? element.querySelector<HTMLElement>('[data-focus-key="report:hide"]'))?.focus({ preventScroll: true });
   };
-  const controller = createDayReportController(client, render);
+  const yearController = createYearReportController(client, state => {
+    yearView.render();
+    // A refreshed annual snapshot must not leave a daily chart on older data.
+    if (state.phase === 'ready' && controller.get().report && controller.get().report!.revision !== state.report!.revision) controller.retry();
+  });
+  const yearView = createYearReportView({ controller: yearController, onDay: report => {
+    options.onDate(report);
+    element.querySelector<HTMLInputElement>('#report-time')?.focus({ preventScroll: true });
+    element.scrollIntoView({ block: 'start' });
+  }, canStart: () => controller.get().phase === 'ready' });
+  const controller = createDayReportController({ day(...args) { yearController.cancel(); return client.day(...args); } }, render);
   return {
     element,
-    setContext(next: PlaceSelection | null, nextDate: string, instant: number, includeTrees: boolean) {
+    setContext(next: PlaceSelection | null, nextDate: string, instant: number, includeTrees: boolean, prepared?: DaySunReport) {
       if (next?.place.id !== selection?.place.id) endPicking();
       selection = next; date = nextDate; at = instant;
-      controller.setContext(next ? { target: { id: `${next.place.id}:${next.analysisPoint.id}`, coordinates: next.analysisPoint.coordinates }, date: nextDate, includeTrees } : null);
+      const target = next ? { id: `${next.place.id}:${next.analysisPoint.id}`, coordinates: next.analysisPoint.coordinates } : null;
+      const year = Number(nextDate.slice(0, 4));
+      yearController.setContext(target && Number.isInteger(year) && year >= 1 && year <= 9999 ? { target, year, includeTrees } : null);
+      controller.setContext(target ? { target, date: nextDate, includeTrees } : null, prepared);
       updateTime();
     },
     setPickedPoint(value: PlaceCoordinates) { if (!picking) return false; picking = [...value]; if (latitude && longitude) { latitude.value = String(value[1]); longitude.value = String(value[0]); } return true; },
     cancelPicking() { if (!picking) return false; endPicking(); render(controller.get()); return true; },
-    hide() { endPicking(); controller.close(); },
+    hide() { endPicking(); yearController.close(); controller.close(); },
     resume() { if (controller.get().expanded) controller.retry(); },
-    destroy() { endPicking(); controller.destroy(); client.destroy(); },
+    destroy() { endPicking(); yearController.destroy(); controller.destroy(); client.destroy(); },
   };
 }

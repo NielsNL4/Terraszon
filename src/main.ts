@@ -261,6 +261,11 @@ function selectedDate(): Date {
 }
 
 const dayReport = createDayReportView({
+  onDate(report) {
+    dateInput.value = report.date; reportInstant = null;
+    dayReport.setContext(placeSelection.get(), report.date, selectedDate().getTime(), treesEnabled, report);
+    scheduleSolarRender(true);
+  },
   onTime(at) {
     reportInstant = at; const chosen = new Date(at);
     timeInput.value = String(chosen.getHours() * 60 + chosen.getMinutes()); scheduleSolarRender(true);
