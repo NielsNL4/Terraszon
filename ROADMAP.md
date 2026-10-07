@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, F1 en F2 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1 en F2 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -34,24 +34,26 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, F1 en F2 zijn uitgevoer
 | T2 | Requesthergebruik en netwerkplanning | T1 | Afgerond — 7 oktober 2026 |
 | T3 | Locatiemodel en persoonlijke opslag | — | Afgerond — 7 oktober 2026 |
 | T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Afgerond — 7 oktober 2026 |
-| T5 | Zonrapport-engine per analysepunt | T1, T3 | Open |
+| T5 | Zonrapport-engine per analysepunt | T1, T3 | Afgerond — 7 oktober 2026 |
 | T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Open |
 | T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Open, later |
 | T8 | Nederlandse databronnen en hoogteverrijking | Evaluatie T7 | Open, later |
 | F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Afgerond — 7 oktober 2026 |
 | F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Afgerond — 7 oktober 2026 |
-| F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Open |
+| F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Geparkeerd op gebruikersverzoek |
 | F4 | Dagzonrapport voor iedere locatie | T5, F1 | Open |
 | F5 | Jaaroverzicht en dagdeelgrafieken | F4 | Open |
 | F6 | Selecteren op zonneduur en deelbare locaties | F2, F3, F4; evaluatie T6 | Open, later |
 
 ## Aanbevolen bouwvolgorde
 
-**T1 → T2 → T3 → F1 → F2 → T4 → F3 → T5 → F4 → F5 → T6**
+**T1 → T2 → T3 → F1 → F2 → T4 → T5 → F4 → F5 → T6**
 
 Hiermee komt eerst betrouwbaar laden, vervolgens een bruikbaar locatiemenu en daarna het complete zonrapport. T6 optimaliseert op basis van de werkelijk gebouwde flows.
 
 Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start geen betaalde provider, grotere datadownload of nieuwe hostingopzet zonder de keuze en operationele gevolgen eerst te bevestigen.
+
+**F3 is geparkeerd.** Na de overige implementaties Google Places UI Kit evalueren voor zoeken én restaurantdetails; eventueel later ook de kaart. De bronafhankelijke onderdelen van F6 worden dan afzonderlijk afgestemd.
 
 ## Technische fases
 
@@ -162,7 +164,7 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Productie-browsercheck geslaagd onder `/Terraszon/`: nul parserrequests bij kaartstart, één native worker bij selectie, hergebruik bij tijdwijziging, open/gesloten en DST-invalid-time, één foto-metadataopvraag over meerdere tijdkeuzes, licenties inclusief GPL-tekst bereikbaar, geen ongehanteerde browserfouten.
 - Eindcontroles geslaagd: `npm run lint` (Oxlint), `npm test` (179 tests in 24 bestanden), `npm run build` en `git diff --check`.
 - Bewijsgrenzen: productieflow gebruikt synthetische restaurant-/mediametadata; de parser en productie-assets zijn echt. Live broncontrole verifieert koppeling en gepubliceerde metadata, niet actuele openingspraktijk of een exacte terraspositie. Een eerste publieke Overpass-opvraag werd geweigerd/gelimiteerd; daarna is niet door quota heen geroteerd en de kleine OSM REST-batch is gebruikt. De parserworker is circa 716 kB ongecomprimeerd en apart geladen; de bestaande hoofd-bundlewaarschuwing blijft.
-- Volgende fase: F3, foto's en openingstijden mooi verwerken in het detailpaneel en filters.
+- Bijgestelde vervolgstap op gebruikersverzoek: T5. F3 blijft geparkeerd tot de latere Google Places UI Kit-evaluatie.
 
 ### T5 — Zonrapport-engine per analysepunt
 
@@ -181,9 +183,25 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Overgangstijden zijn benaderingen met een vastgelegde tijdstap/verfijning, zonder onterechte precisie.
 - Een stabiele dataset geeft hetzelfde punt hetzelfde rapport na kaartbeweging.
 - Maart en september mogen door seizoensbomen verschillen. Februari en schrikkeljaren blijven geldige invoer.
-- Enkele gecontroleerde Groningen-punten buiten vergelijken; positie-, hoogte-, boom- en parasolfouten afzonderlijk noteren.
+
+**Latere praktijkvalidatie**
+- Enkele gecontroleerde Groningen-punten buiten vergelijken; positie-, hoogte-, boom- en parasolfouten afzonderlijk noteren. Op gebruikersverzoek blokkeert deze latere controle de technische oplevering van T5 niet.
 
 **Commit:** `Calculate daily and seasonal sun reports in a worker`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- Puntgebonden bronlader toegevoegd met een vierkant gebied van ±532 meter: de bestaande 500 meter schaduwhorizon plus kroonmarge. De loader ontvangt geen kaartbeeld en gebruikt het bestaande gedeelde Overpass-budget. Gebouwhoogtes komen uit OSM of de bestaande 9 meter fallback, niet uit de zichtbare kaarttiles; geschatte hoogtes worden vermeld.
+- Rapportobstakels zijn los van de 1.000-bomen-renderselectie. Maximaal 12.000 bomen en 12.000 gebouwen worden verwerkt, met expliciete onvolledigheid bij selectie-/bronlimieten. Bronnen houden hun bestaande begrensde laad-, paging- en splitsingsbudgetten. Succesvolle brondata blijven beschikbaar als de andere bron faalt.
+- Dagrapport met afzonderlijke zon/schaduw/gefilterd/nacht/onbekend-vensters, duur, daglichtaandeel, langste zonperiode, resterende/volgende zon en lokale dagdelen (vóór 12:00, 12:00–17:00, daarna). Een grondpunt binnen een gebouw geldt als schaduw en krijgt een positie-waarschuwing; de interactieve restaurant-POI-conventie blijft afzonderlijk bestaan.
+- Vastgelegd rekencontract: classificatie op het midden van 5-minutenintervallen, gevonden toestandswissels verfijnen tot circa 1 minuut en als minuutgrens rapporteren. Kortere perioden kunnen worden gemist. Daglicht is de zonmiddelpuntstand boven 0°; gepubliceerde SunCalc-opkomst/-ondergang gebruiken diens afzonderlijke standaardhorizon. Directe zon is geometrisch licht, geen weersverwachting.
+- Ontbrekende/afgekapt geladen obstakels leveren geen zekere directe zon op. Bekende gebouw-/boomafscherming en nacht blijven afzonderlijke uitkomsten; bij onvolledigheid is het directe daglichtaandeel onbekend. Niet-gekarteerde objecten, hoogtefallbacks, geschatte boomvorm/bladstand en de 500 meter horizon blijven benoemde modelbeperkingen.
+- Jaaranalyse uitsluitend op aanvraag: twaalf maanddagen op de 15e plus 21 maart, juni, september en december, expliciet geen maandgemiddelden. Maart en september worden zelfstandig met hun bladstand berekend. Voorbereide geometrie/ray-oorsprongen worden hergebruikt; elke 32 tijdstappen wordt de worker vrijgegeven voor annulering.
+- Begrensde caches: twee obstakelsnapshots en voorbereidingen, 32 dagresultaten. Sleutels bevatten puntidentiteit/coördinaten, datum, instellingen inclusief browsertijdzone, obstakelrevision en modelversie. De jaarberekening hergebruikt deze dagcache. Snapshothergebruik maximaal vijf minuten bij volledige niet-lege data, één minuut bij lege data en drie seconden bij fouten/onvolledigheid; onderliggende broncaches houden hun eigen TTL. Invalidation wist rapportcaches; het is geen geforceerde omzeiling van broncaches.
+- Lazy client/worker met voortgang, selectie-supersession, expliciete annulering en deadlines (47 seconden obstakeljob, 90 seconden dagclient, 180 seconden jaarclient). Late resultaten overschrijven geen nieuwe aanvraag. De build bevat een afzonderlijke, exporteerbare `sunReports`-entry; de rapportworker wordt niet bij kaartstart geladen.
+- Eindcontroles geslaagd: `npm run lint` (Oxlint), `npm test` (203 tests in 26 bestanden), `npm run build` en `git diff --check`. Deterministische fixtures dekken gebouw-/boom-/nacht-/onvolledigheidsscenario's, duurinvarianten, overgangsverfijning, schrikkeldagen, seizoenen, revisions, bronfouten, deadlines en annulering.
+- Native Chromium-productiecheck geslaagd onder `/Terraszon/`, tijdzone Europe/Amsterdam: nul rapportworkerrequests bij kaartstart, één hergebruikte worker, stabiele daguitkomst bij herhaling, 16 jaarresultaten, correcte 1.380/1.500 minuten rond zomer-/wintertijd, annulering en geslaagde vervolgaanvraag, geen ongehanteerde browserfouten. Deze check gebruikt synthetische volledig-lege bronresponses; client, worker, SunCalc en netwerkbroker zijn echt.
+- **Latere praktijkvalidatie:** buitenwaarnemingen op gecontroleerde Groningen-punten, met tijdstip, exacte zitpositie en afzonderlijke beoordeling van hoogte-, boom- en parasolfouten. Niet uitgevoerd en niet vervangen door synthetische tests. De gebruiker bevestigde dat deze controle later volgt en de technische oplevering niet tegenhoudt; T5 blijft één fase.
+- Bewijsgrenzen: browserlokale tijd, geen wereldwijde tijdzone-lookup, balkon-/reliëf-/parasolmodel of praktijknauwkeurigheidsclaim. Boven 85° breedte en een gebied over de datumgrens worden expliciet geweigerd. De bestaande hoofd-bundlewaarschuwing blijft aanwezig. De rapportinterface volgt F4/F5.
 
 ### T6 — Gemeten verwerking- en cacheoptimalisatie
 

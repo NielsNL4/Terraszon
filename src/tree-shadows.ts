@@ -54,6 +54,25 @@ function hitsTriangle(origin: number[], direction: number[], vertices: Float32Ar
 
 export function possibleTreeShade(point: Position, trees: PreparedTree[], altitude: number,
   azimuth: number, date: string): boolean {
+  function* rays() { for (const tree of trees) yield treeRay(point, tree); }
+  return treeShadeTest(rays(), altitude, azimuth, date);
+}
+
+function treeRay(point: Position, tree: PreparedTree) {
+  const dx = (point[0] - tree.longitude) * 111_320 * Math.cos(tree.latitude * Math.PI / 180);
+  const dy = (tree.latitude - point[1]) * 111_320;
+  const cos = Math.cos(tree.rotation), sin = Math.sin(tree.rotation);
+  return { tree, cos, sin, origin: [(cos * dx + sin * dy) / tree.radius, (-sin * dx + cos * dy) / tree.radius, 0] };
+}
+
+// Reports repeatedly classify the same point. Its tree-local origins and
+// rotations stay constant across the entire day/year; meshes remain shared.
+export function createTreeShadeTest(point: Position, trees: PreparedTree[]) {
+  const rays = trees.map(tree => treeRay(point, tree));
+  return (altitude: number, azimuth: number, date: string) => treeShadeTest(rays, altitude, azimuth, date);
+}
+
+function treeShadeTest(rays: Iterable<ReturnType<typeof treeRay>>, altitude: number, azimuth: number, date: string): boolean {
   if (altitude <= 0) return false;
   const radians = Math.max(altitude, 0.5) * Math.PI / 180;
   const bearing = azimuth * Math.PI / 180;
@@ -62,11 +81,7 @@ export function possibleTreeShade(point: Position, trees: PreparedTree[], altitu
   const up = Math.sin(radians);
   const maximum = 500 / Math.max(Math.cos(radians), 0.001);
   const day = treeSeasonDay(date);
-  for (const tree of trees) {
-    const dx = (point[0] - tree.longitude) * 111_320 * Math.cos(tree.latitude * Math.PI / 180);
-    const dy = (tree.latitude - point[1]) * 111_320;
-    const cos = Math.cos(tree.rotation), sin = Math.sin(tree.rotation);
-    const origin = [(cos * dx + sin * dy) / tree.radius, (-sin * dx + cos * dy) / tree.radius, 0];
+  for (const { tree, cos, sin, origin } of rays) {
     const direction = [(cos * east + sin * south) / tree.radius, (-sin * east + cos * south) / tree.radius, up / tree.height];
     if (!hitsBounds(origin, direction, maximum)) continue;
     const leaves = leafAmount(tree.leafCycle, day, tree.phenologyShift) * tree.profile.density >= 0.01;

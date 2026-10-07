@@ -27,9 +27,11 @@ export default defineConfig({
   }],
   build: {
     rolldownOptions: {
+      preserveEntrySignatures: 'exports-only',
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         buildingColors: fileURLToPath(new URL('./gebouwkleuren.html', import.meta.url)),
+        sunReports: fileURLToPath(new URL('./src/sun-report-client.ts', import.meta.url)),
       },
     },
   },

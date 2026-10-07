@@ -270,12 +270,18 @@ export function isPointInBuildingShadows(
   polygons: PreparedShadowPolygon[],
   altitudeDegrees: number,
   azimuthDegrees: number,
+  shadeUnderFootprint = false,
 ): boolean {
   return pointInProjectedShadows(
     point,
     polygons,
     vectorCache(altitudeDegrees, azimuthDegrees),
+    shadeUnderFootprint,
   );
+}
+
+export function isPointInsideBuilding(point: Position, polygons: PreparedShadowPolygon[]): boolean {
+  return polygons.some(polygon => pointInPolygon(point, polygon.rings));
 }
 
 export function classifyTerracePoints(

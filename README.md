@@ -130,6 +130,28 @@ De kleine, gecontroleerde Groningen-selectie koppelt OSM-node 918944223 (Huis De
 
 Referenties: [opening_hours API](https://github.com/opening-hours/opening_hours.js#library-api), [Commons Imageinfo](https://www.mediawiki.org/wiki/API:Imageinfo), [Commons hergebruik](https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia). Beelddekking is beperkt tot beschikbare, gekoppelde of gecontroleerde bestanden; de volledige fotoshow en leesbare openingstijdenbediening volgen in F3.
 
+## Puntgebonden zonrapport-engine
+
+`src/sun-report-client.ts` levert de technische dag-/jaaranalyse voor F4/F5. Maak één client aan en geef de exacte grond-/zitpositie met een stabiel analysepunt-ID door; een horecabronpin is niet automatisch die positie. De worker laadt een eigen obstakelgebied rond het punt en ontvangt geen kaartviewport of gerenderde tilehoogtes.
+
+```ts
+import { createSunReportClient } from './sun-report-client';
+
+const reports = createSunReportClient(); // Worker start pas bij de eerste aanvraag.
+const controller = new AbortController();
+const target = { id: 'custom:garden:seat', coordinates: [6.568, 53.219] as [number, number] };
+const day = await reports.day(target, '2026-07-15', controller.signal);
+// Alleen op aanvraag:
+const year = await reports.year(target, 2026, controller.signal);
+// controller.abort() annuleert de actieve aanvraag; reports.destroy() ruimt op.
+```
+
+Vensters bevatten epoch-milliseconden; duurvelden en dagdeeltotalen zijn minuten. `directShareOfDaylight` is een percentage of `null` bij onvolledigheid. `sun`, `shade`, `filtered`, `night` en `unknown` sluiten elkaar uit. Ontbrekende obstakeldata leveren geen zekere zon op. `coverage`, `complete`, `warnings` en `accuracy` moeten bij presentatie worden meegenomen. `sunAvailability()` uit `src/sun-report-engine.ts` geeft resterende/volgende directe zon voor een tijdstip.
+
+Sampling gebeurt iedere vijf minuten met circa één minuut verfijning voor gevonden overgangen; kortere perioden kunnen worden gemist. Daglicht is de zonmiddelpuntstand boven de horizon. Opkomst en ondergang volgen de eigen standaardhorizon van SunCalc. Jaarresultaten zijn twaalf representatieve maanddagen en vier afzonderlijke seizoensdagen, geen maandgemiddelden. Tijd en dagdelen volgen de browsertijdzone; dagen rond zomer-/wintertijd kunnen 23 of 25 uur duren.
+
+Een nieuwe aanvraag vervangt de actieve taak van dezelfde client. Resultaten en voorbereide obstakels worden begrensd hergebruikt op basis van punt, datum, instellingen, revision en modelversie. `invalidate()` wist rapport-/snapshotcaches en annuleert de actieve analyse; onderliggende broncaches behouden hun bestaande TTL. De productiebuild bevat een afzonderlijke `sunReports`-entry en een lazy rapportworker, ook bruikbaar op een genest GitHub Pages-pad. De technische fase T5 is afgerond; de interface volgt in F4/F5 en buitenvalidatie volgt later. Zie [T5 in de roadmap](./ROADMAP.md#t5--zonrapport-engine-per-analysepunt).
+
 ## Nauwkeurigheid en beperkingen
 
 - De geselecteerde tijd gebruikt de tijdzone van de browser. Bij een kaartlocatie in een andere tijdzone moet de gebruiker dit verschil zelf meenemen.

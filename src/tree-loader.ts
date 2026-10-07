@@ -44,7 +44,8 @@ export function missingTreeBounds(target: TreeBounds, coverage: TreeBounds[]): T
   return pending;
 }
 
-export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumRequests?: number; maximumDepth?: number } = {}) {
+export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumRequests?: number; maximumDepth?: number; selectionLimit?: number } = {}) {
+  const selectionLimit = Math.max(1, Math.min(12_000, options.selectionLimit ?? MAX_RENDER_TREES));
   const regions: Array<{ bounds: TreeBounds; data: TreeAreaData; savedAt: number }> = [];
   const complete = (data: TreeAreaData) => data.status === 'complete' || data.status === 'empty';
   const loadView = async (view: TreeBounds, signal: AbortSignal, callerSignal: AbortSignal): Promise<TreeViewData> => {
@@ -126,9 +127,9 @@ export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumR
         const distance = (info: typeof a.info) => ((info.longitude - center[0]) * longitudeScale) ** 2 + (info.latitude - center[1]) ** 2;
         return distance(a.info) - distance(b.info);
       });
-    const trees = ranked.slice(0, MAX_RENDER_TREES).map(({ tree }) => tree).sort((a, b) => a.properties.id.localeCompare(b.properties.id));
+    const trees = ranked.slice(0, selectionLimit).map(({ tree }) => tree).sort((a, b) => a.properties.id.localeCompare(b.properties.id));
     const uncovered = missingTreeBounds(target, coverage()).length > 0;
-    return { trees, capped: capped && uncovered, renderLimited: ranked.length > MAX_RENDER_TREES, failedAreas, sources: [...sources].sort(),
+    return { trees, capped: capped && uncovered, renderLimited: ranked.length > selectionLimit, failedAreas, sources: [...sources].sort(),
       status: uncovered ? (trees.length || sources.size ? 'partial' : 'failed') : trees.length ? 'complete' : 'empty' };
   };
   return async (view: TreeBounds, signal: AbortSignal) => {
