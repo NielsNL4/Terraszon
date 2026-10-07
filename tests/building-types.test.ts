@@ -101,7 +101,7 @@ describe('gebouwdata laden', () => {
     ]);
     const result = await fetchBuildings(bounds, new AbortController().signal);
     const query = fetchMock.mock.calls[0][0].searchParams.get('data');
-    expect(query).toContain('way["building"](53.2100,6.5600,53.2200,6.5800)');
+    expect(query).toContain('way["building"](53.210000,6.560000,53.220000,6.580000)');
     expect(query).toContain('relation["building"]["type"="multipolygon"]');
     expect(query).toContain('way["building:part"]');
     expect(query).toContain('[maxsize:67108864]');
@@ -113,12 +113,15 @@ describe('gebouwdata laden', () => {
   });
 
   it('geeft afgekapt, leeg of onvolledig resultaat niet door als een volledig gecachet gebied', async () => {
+    fetchBuildings = createBuildingLoader({ maximumDepth: 0 });
     let mocks = setup(Array.from({ length: MAX_FETCHED_BUILDINGS + 1 }, (_, id) => ({ type: 'way', id })));
     expect(await fetchBuildings(bounds, new AbortController().signal)).toMatchObject({ buildings: [], capped: true });
     expect(mocks.setItem).not.toHaveBeenCalled();
+    fetchBuildings = createBuildingLoader();
     mocks = setup([]);
     expect(await fetchBuildings(bounds, new AbortController().signal)).toMatchObject({ buildings: [], capped: false });
     expect(mocks.setItem).not.toHaveBeenCalled();
+    fetchBuildings = createBuildingLoader();
     mocks = setup([], 'runtime error: Query timed out');
     await expect(fetchBuildings(bounds, new AbortController().signal)).rejects.toThrow('Onvolledig');
     expect(mocks.setItem).not.toHaveBeenCalled();
@@ -173,7 +176,7 @@ describe('gebouwdata laden', () => {
     const { fetchMock } = setup([]);
     fetchMock.mockImplementation(async (url) => {
       const query = url.searchParams.get('data');
-      if (query.includes('53.2100,6.5600,53.2200,6.6400')) return { ok: true, json: async () => ({ elements: [
+      if (query.includes('53.210000,6.560000,53.220000,6.640000')) return { ok: true, json: async () => ({ elements: [
         { type: 'way', id: 1, tags: { building: 'house' }, geometry: ring() },
       ] }) };
       throw new DOMException('The operation was aborted', 'AbortError');

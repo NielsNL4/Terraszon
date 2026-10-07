@@ -4,7 +4,23 @@ import { TREE_INSTANCE_STRIDE, TREE_VERTEX_STRIDE, treeInstances, treeMesh } fro
 import { leafAmount, TREE_PROFILES, treeIdentity, treeSeasonDay } from '../src/tree-profiles';
 import { shadowVector } from '../src/shadows';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+const groningenBounds = { south: 53.217, west: 6.566, north: 53.223, east: 6.572 };
+const osmBounds = { south: 52.99, west: 5.99, north: 53.01, east: 6.01 };
+const municipalRecords = (count: number, start = 0) => Array.from({ length: count }, (_, i) => ({
+  attributes: { OBJECTID: start + i, BOOMHOOGTE: '15 tot 18 m.', BOOMSOORT: 'Hollandse linde', LATIJNSE_NAAM: 'Tilia x europaea' },
+  geometry: { x: 6.569484, y: 53.220222 },
+}));
+const osmRecords = (count: number) => Array.from({ length: count }, (_, id) => ({
+  type: 'node', id, lat: 53, lon: 6, tags: { natural: 'tree' },
+}));
+function treeSource(fetchMock: ReturnType<typeof vi.fn>) {
+  const setItem = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('localStorage', { getItem: () => null, setItem });
+  return setItem;
+}
 
 describe('OSM-bomen', () => {
   it('maakt een kroon op schaal en gebruikt veilige maten bij ontbrekende of ongeldige tags', () => {
@@ -33,29 +49,27 @@ describe('OSM-bomen', () => {
     vi.stubGlobal('window', { setTimeout, clearTimeout });
     vi.stubGlobal('localStorage', { getItem: () => null, setItem });
     const bounds = { south: 52.99, west: 5.99, north: 53.01, east: 6.01 };
-    const trees = await fetchTrees(bounds, new AbortController().signal);
+    const result = await fetchTrees(bounds, new AbortController().signal);
     const [, options] = fetchMock.mock.calls[0];
-    expect(options.body.get('data')).toContain('node["natural"="tree"](52.9900,5.9900,53.0100,6.0100);out body 1000;');
-    expect(trees).toHaveLength(1);
+    expect(options.body.get('data')).toContain('node["natural"="tree"](52.990000,5.990000,53.010000,6.010000);out body 1001;');
+    expect(result.trees).toHaveLength(1);
+    expect(result).toMatchObject({ source: 'osm', status: 'complete', capped: false, requests: 1 });
     expect(setItem).toHaveBeenCalledOnce();
   });
 
   it('gebruikt in Groningen de gemeentelijke bomen en toont hun midden als punt', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ features: [{
-        type: 'Feature', id: 72,
-        geometry: { type: 'Point', coordinates: [6.569484, 53.220222] },
-        properties: { OBJECTID: 72, BOOMHOOGTE: '15 tot 18 m.', BOOMSOORT: 'Hollandse linde', LATIJNSE_NAAM: 'Tilia x europaea' },
-      }] }),
+      json: async () => ({ features: municipalRecords(1, 72), exceededTransferLimit: false }),
     });
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('window', { setTimeout, clearTimeout });
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
-    const trees = await fetchTrees(
+    const result = await fetchTrees(
       { south: 53.217, west: 6.566, north: 53.223, east: 6.572 },
       new AbortController().signal,
     );
+    const trees = result.trees;
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0][0].hostname).toBe('services2.arcgis.com');
     expect(fetchMock.mock.calls[0][0].searchParams.get('outFields')).toContain('LATIJNSE_NAAM');
@@ -155,7 +169,7 @@ describe('OSM-bomen', () => {
     expect(await fetchTrees(
       { south: 52.99, west: 5.99, north: 53.01, east: 6.01 },
       new AbortController().signal,
-    )).toEqual([]);
+    )).toMatchObject({ trees: [], status: 'empty', source: 'osm' });
     expect(setItem).not.toHaveBeenCalled();
   });
 
@@ -171,11 +185,98 @@ describe('OSM-bomen', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('window', { setTimeout, clearTimeout });
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
-    const trees = await fetchTrees(
+    const result = await fetchTrees(
       { south: 53.217, west: 6.566, north: 53.223, east: 6.572 },
       new AbortController().signal,
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(trees[0].properties.id).toBe('tree/9');
+    expect(result.trees[0].properties.id).toBe('tree/9');
+    expect(result.source).toBe('osm');
+  });
+
+  it('pagineert een volle gemeentelijke pagina zonder metadata en sorteert stabiel op OBJECTID', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ features: municipalRecords(1_000) }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ features: municipalRecords(2, 1_000), exceededTransferLimit: false }) });
+    const setItem = treeSource(fetchMock);
+    const result = await fetchTrees(groningenBounds, new AbortController().signal);
+    expect(result).toMatchObject({ status: 'complete', source: 'groningen', requests: 2, capped: false });
+    expect(result.trees).toHaveLength(1_002);
+    expect(fetchMock.mock.calls.map(([url]) => url.searchParams.get('resultOffset'))).toEqual(['0', '1000']);
+    expect(fetchMock.mock.calls.every(([url]) => url.searchParams.get('orderByFields') === 'OBJECTID ASC')).toBe(true);
+    expect(setItem).toHaveBeenCalledOnce();
+  });
+
+  it('volgt de transferlimiet ook bij een korte pagina en herkent een expliciet volledig antwoord', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ features: municipalRecords(2), exceededTransferLimit: true }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ features: municipalRecords(1_000, 2), exceededTransferLimit: false }) });
+    treeSource(fetchMock);
+    expect((await fetchTrees(groningenBounds, new AbortController().signal)).status).toBe('complete');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0].searchParams.get('resultOffset')).toBe('2');
+  });
+
+  it('begrenst paging en cachet een afgekapt gemeentelijk gebied niet', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: URL) => ({ ok: true,
+      json: async () => ({ features: municipalRecords(1_000, Number(url.searchParams.get('resultOffset'))), exceededTransferLimit: true }) }));
+    const setItem = treeSource(fetchMock);
+    const result = await fetchTrees(groningenBounds, new AbortController().signal, 2);
+    expect(result).toMatchObject({ status: 'partial', source: 'groningen', capped: true, failed: false, requests: 2 });
+    expect(result.trees).toHaveLength(2_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('behoudt de eerste gemeentelijke pagina wanneer de volgende pagina mislukt', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ features: municipalRecords(2), exceededTransferLimit: true }) })
+      .mockRejectedValueOnce(new Error('Vervolgpagina niet bereikbaar'));
+    const setItem = treeSource(fetchMock);
+    const result = await fetchTrees(groningenBounds, new AbortController().signal);
+    expect(result).toMatchObject({ status: 'partial', source: 'groningen', failed: true, requests: 2 });
+    expect(result.trees).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // no replacement with an OSM snapshot
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('stopt een herhaalde gemeentelijke pagina zonder volledige dekking te claimen', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true,
+      json: async () => ({ features: municipalRecords(1_000), exceededTransferLimit: true }) });
+    const setItem = treeSource(fetchMock);
+    const result = await fetchTrees(groningenBounds, new AbortController().signal);
+    expect(result).toMatchObject({ status: 'partial', capped: true, requests: 2 });
+    expect(result.trees).toHaveLength(1_000);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('detecteert OSM-afkapping met een sentinel zonder die boom als volledig gebied te cachen', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ elements: osmRecords(1_001) }) });
+    const setItem = treeSource(fetchMock);
+    const result = await fetchTrees(osmBounds, new AbortController().signal);
+    expect(result).toMatchObject({ status: 'partial', source: 'osm', capped: true, failed: false });
+    expect(result.trees).toHaveLength(1_000);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('onderscheidt bronfouten van een aantoonbaar leeg gebied', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ elements: [], remark: 'Query timed out' }) });
+    const setItem = treeSource(fetchMock);
+    expect(await fetchTrees(osmBounds, new AbortController().signal)).toMatchObject({ status: 'failed', failed: true, trees: [] });
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('breekt paging af ook als de volgende fetch annuleren negeert', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ features: municipalRecords(2), exceededTransferLimit: true }) })
+      .mockImplementationOnce(() => new Promise(() => {}));
+    const setItem = treeSource(fetchMock);
+    const controller = new AbortController();
+    const pending = fetchTrees(groningenBounds, controller.signal);
+    const check = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    controller.abort();
+    await check;
+    expect(setItem).not.toHaveBeenCalled();
   });
 });

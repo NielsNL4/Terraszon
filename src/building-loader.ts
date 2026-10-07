@@ -2,6 +2,7 @@ import { buildingBox, parseBuildings } from './building-types';
 import { OVERPASS_ENDPOINTS } from './terraces';
 import type { CategorizedBuilding } from './types';
 import { abortable, aborted, requestJSON } from './requests';
+import { splitDataBounds, type DataCoverage } from './data-coverage';
 
 type Bounds = { south: number; west: number; north: number; east: number };
 export type BuildingData = {
@@ -10,14 +11,20 @@ export type BuildingData = {
   failedAreas: number;
   loadedAreas: number;
   totalAreas: number;
+  completeAreas: number;
+  emptyAreas: number;
+  partialAreas: number;
+  status: DataCoverage;
+  source: 'osm';
 };
 export const MAX_FETCHED_BUILDINGS = 20_000; // minimum per-request limit, not a screen-wide limit
 const MAX_VIEW_BUILDINGS = 60_000;
 const MAX_AREAS = 24;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
-export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[] };
+export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[]; status: 'complete' | 'empty'; source: 'osm' };
 type AreaStore = { get: (key: string) => Promise<CachedArea | null>; set: (key: string, value: CachedArea) => Promise<void> };
-type LoaderOptions = { mobile?: boolean; store?: AreaStore; deadline?: number };
+type LoaderOptions = { mobile?: boolean; store?: AreaStore; deadline?: number; maximumDepth?: number; maximumRefinements?: number };
+type AreaResult = { buildings: CategorizedBuilding[]; status: DataCoverage; capped: boolean; failedAreas: number; areaStatuses: DataCoverage[] };
 
 export function buildingAreas(bounds: Bounds, mobile = false): Bounds[] {
   const areas: Bounds[] = [];
@@ -43,7 +50,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
   const latitudeScale = options.mobile ? 200 : 100, longitudeScale = options.mobile ? 100 : 50;
   const batchSize = options.mobile ? 2 : 4;
   const memory = new Map<string, CachedArea>();
-  const keyFor = (area: Bounds) => `terraszon:v3:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(4)).join(':')}`;
+  const keyFor = (area: Bounds) => `terraszon:v4:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(':')}`;
   const remember = (key: string, cached: CachedArea) => {
     memory.delete(key);
     memory.set(key, cached);
@@ -54,16 +61,35 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       memory.delete(first);
     }
   };
-  const cachedArea = async (area: Bounds): Promise<CategorizedBuilding[] | null> => {
+  const cachedArea = async (area: Bounds): Promise<CachedArea | null> => {
     const key = keyFor(area);
     let cached = memory.get(key);
     if (!cached) {
       cached = await store.get(key) ?? undefined;
     }
-    if (!cached || !Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt >= CACHE_TTL || !Array.isArray(cached.buildings)
+    if (!cached || cached.source !== 'osm' || !['complete', 'empty'].includes(cached.status)
+      || !Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt >= (cached.status === 'empty' ? 60_000 : CACHE_TTL) || !Array.isArray(cached.buildings)
       || cached.buildings.length > MAX_VIEW_BUILDINGS) return null;
     remember(key, cached);
-    return cached.buildings;
+    return cached;
+  };
+
+  const saveAreas = (areas: Bounds[], buildings: CategorizedBuilding[]) => {
+    const boxes = buildings.map((building) => buildingBox(building.geometry));
+    const statuses: DataCoverage[] = [];
+    for (const area of areas) {
+      const subset = areas.length === 1 ? buildings : buildings.filter((_building, index) => {
+        const box = boxes[index];
+        return box.east >= area.west && box.west <= area.east && box.north >= area.south && box.south <= area.north;
+      });
+      const key = keyFor(area), cached: CachedArea = { savedAt: Date.now(), buildings: subset,
+        source: 'osm', status: subset.length ? 'complete' : 'empty' };
+      remember(key, cached);
+      statuses.push(cached.status);
+      // Complete empty areas are remembered briefly in memory, not for 24 hours.
+      if (subset.length) void store.set(key, cached).catch(() => {});
+    }
+    return statuses;
   };
 
   const loadArea = async (areas: Bounds[], signal: AbortSignal) => {
@@ -71,10 +97,10 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     // small queries would exhaust the public instances' per-client quota.
     const envelope = { south: Math.min(...areas.map(a => a.south)), north: Math.max(...areas.map(a => a.north)),
       west: Math.min(...areas.map(a => a.west)), east: Math.max(...areas.map(a => a.east)) };
-    const rectangle = Math.round((envelope.north - envelope.south) * latitudeScale)
+    const rectangle = areas.length === 1 || Math.round((envelope.north - envelope.south) * latitudeScale)
       * Math.round((envelope.east - envelope.west) * longitudeScale) === areas.length;
     const selectors = (rectangle ? [envelope] : areas).map((area) => {
-      const bbox = [area.south, area.west, area.north, area.east].map(v => v.toFixed(4)).join(',');
+      const bbox = [area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(',');
       return `way["building"](${bbox});relation["building"]["type"="multipolygon"](${bbox});way["building:part"](${bbox});relation["building:part"]["type"="multipolygon"](${bbox});`;
     }).join('');
     const limit = options.mobile ? Math.max(4_000, 3_000 * areas.length) : Math.max(MAX_FETCHED_BUILDINGS, 8_000 * areas.length);
@@ -88,22 +114,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
         const payload = await requestJSON<Parameters<typeof parseBuildings>[0] & { remark?: string }>(url, signal, 18_000);
         if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
         if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-        if (payload.elements.length > limit) return { buildings: [], capped: true };
-        const buildings = parseBuildings(payload);
-        if (buildings.length) {
-          const boxes = buildings.map((building) => buildingBox(building.geometry));
-          for (const area of areas) {
-            const subset = areas.length === 1 ? buildings : buildings.filter((_building, index) => {
-              const box = boxes[index];
-              return box.east >= area.west && box.west <= area.east && box.north >= area.south && box.south <= area.north;
-            });
-            if (!subset.length) continue;
-            const key = keyFor(area), cached = { savedAt: Date.now(), buildings: subset };
-            remember(key, cached);
-            void store.set(key, cached).catch(() => {});
-          }
-        }
-        return { buildings, capped: false };
+        return { buildings: parseBuildings({ elements: payload.elements.slice(0, limit) }), capped: payload.elements.length > limit };
       } catch (error) {
         if (signal.aborted) throw error;
         lastError = error;
@@ -116,14 +127,24 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
     const allAreas = buildingAreas(bounds, options.mobile), areas = allAreas.slice(0, MAX_AREAS);
     const buildings = new Map<string, CategorizedBuilding>();
+    const contributions = new Map<string, CategorizedBuilding[]>();
     let capped = areas.length < allAreas.length, failedAreas = 0, loadedAreas = 0;
+    let viewLimited = false;
+    let completeAreas = 0, emptyAreas = 0, partialAreas = 0;
     let lastError: unknown;
-    const snapshot = (): BuildingData => ({ buildings: [...buildings.values()], capped, failedAreas, loadedAreas, totalAreas: areas.length });
+    const snapshot = (): BuildingData => ({ buildings: [...buildings.values()], capped: capped || viewLimited, failedAreas, loadedAreas, totalAreas: areas.length,
+      completeAreas, emptyAreas, partialAreas, source: 'osm',
+      status: capped || viewLimited || failedAreas || partialAreas || loadedAreas < areas.length ? 'partial' : buildings.size ? 'complete' : 'empty' });
     const merge = (features: CategorizedBuilding[]) => {
       for (const building of features) {
-        if (buildings.size >= MAX_VIEW_BUILDINGS && !buildings.has(building.properties.id)) { capped = true; break; }
+        if (buildings.size >= MAX_VIEW_BUILDINGS && !buildings.has(building.properties.id)) { viewLimited = true; break; }
         buildings.set(building.properties.id, building);
       }
+    };
+    const replaceContribution = (key: string, features: CategorizedBuilding[]) => {
+      contributions.set(key, features);
+      buildings.clear(); viewLimited = false;
+      for (const records of contributions.values()) merge(records);
     };
     const controller = new AbortController();
     const abort = () => controller.abort(aborted(signal));
@@ -132,10 +153,59 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     const deadline = setTimeout(() => controller.abort(new DOMException('Gebouwdata reageerde niet op tijd', 'TimeoutError')), options.deadline ?? 45_000);
     let finished = false;
     const pending: Bounds[] = [];
+    let refinements = options.maximumRefinements ?? (options.mobile ? 8 : 16);
+    const resolveArea = async (batch: Bounds[], depth: number, report: (features: CategorizedBuilding[]) => void, initial = false): Promise<AreaResult> => {
+      if (controller.signal.aborted) throw aborted(controller.signal);
+      if (!initial && batch.length === 1) {
+        const cached = await abortable(cachedArea(batch[0]), controller.signal);
+        if (cached) {
+          report(cached.buildings);
+          return { buildings: cached.buildings, status: cached.status, capped: false, failedAreas: 0, areaStatuses: [cached.status] };
+        }
+      }
+      if (!initial && refinements-- <= 0) return { buildings: [], status: 'partial', capped: true, failedAreas: 0, areaStatuses: batch.map(() => 'partial') };
+      let result: Awaited<ReturnType<typeof loadArea>>;
+      try { result = await loadArea(batch, controller.signal); }
+      catch (error) {
+        if (controller.signal.aborted) throw aborted(controller.signal);
+        lastError = error;
+        return { buildings: [], status: 'failed', capped: false, failedAreas: batch.length, areaStatuses: batch.map(() => 'failed') };
+      }
+      if (!result.capped) {
+        const areaStatuses = saveAreas(batch, result.buildings);
+        if (!initial) report(result.buildings);
+        return { ...result, status: result.buildings.length ? 'complete' : 'empty', failedAreas: 0, areaStatuses };
+      }
+      const children = batch.length > 1 ? batch.map(area => [area])
+        : depth < (options.maximumDepth ?? 3) ? splitDataBounds(batch[0]).map(area => [area]) : [];
+      report(result.buildings);
+      if (!children.length) return { ...result, status: 'partial', failedAreas: 0, areaStatuses: batch.map(() => 'partial') };
+      const results: AreaResult[] = [];
+      for (const child of children) results.push(await resolveArea(child, batch.length > 1 ? depth : depth + 1, report));
+      const full = results.every(child => child.status === 'complete' || child.status === 'empty');
+      const unique = new Map<string, CategorizedBuilding>();
+      let limited = false;
+      for (const building of [...(full ? [] : result.buildings), ...results.flatMap(child => child.buildings)]) {
+        if (unique.size >= MAX_VIEW_BUILDINGS && !unique.has(building.properties.id)) { limited = true; continue; }
+        unique.set(building.properties.id, building);
+      }
+      const merged = [...unique.values()];
+      const status = full && !limited ? (merged.length ? 'complete' : 'empty') : 'partial';
+      const areaStatuses: DataCoverage[] = full && !limited ? saveAreas(batch, merged)
+        : batch.length > 1 ? results.flatMap(child => child.areaStatuses) : [status];
+      return { buildings: merged, status, areaStatuses,
+        capped: limited || results.some(child => child.capped),
+        failedAreas: batch.length > 1 ? results.reduce((count, child) => count + child.failedAreas, 0) : results.some(child => child.failedAreas) ? 1 : 0 };
+    };
     try {
       const cached = await abortable(Promise.all(areas.map(cachedArea)), controller.signal);
       for (let index = 0; index < areas.length; index++) {
-        if (cached[index]) { merge(cached[index]!); loadedAreas++; } else pending.push(areas[index]);
+        const record = cached[index];
+        if (record) {
+          contributions.set(keyFor(areas[index]), record.buildings);
+          merge(record.buildings); loadedAreas++; completeAreas++; if (record.status === 'empty') emptyAreas++;
+        }
+        else pending.push(areas[index]);
       }
       if (loadedAreas) onProgress?.(snapshot());
       const rows = new Map<number, Bounds[]>();
@@ -149,11 +219,28 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       try { await abortable(Promise.all(Array.from({ length: Math.min(options.mobile ? 1 : 2, batches.length) }, async () => {
         while (next < batches.length && !controller.signal.aborted) {
           const batch = batches[next++];
+          const key = batch.map(keyFor).join('|');
+          const provisional = new Map<string, CategorizedBuilding>();
           try {
-            const result = await loadArea(batch, controller.signal);
+            const result = await resolveArea(batch, 0, (features) => {
+              if (finished || controller.signal.aborted) return;
+              for (const feature of features) {
+                if (provisional.size < MAX_VIEW_BUILDINGS || provisional.has(feature.properties.id)) provisional.set(feature.properties.id, feature);
+              }
+              replaceContribution(key, [...provisional.values()]);
+              onProgress?.(snapshot());
+            }, true);
             if (finished || controller.signal.aborted) return;
             capped ||= result.capped;
-            merge(result.buildings);
+            // A complete refined snapshot replaces provisional records (for
+            // example an outline superseded by its complete multipolygon).
+            replaceContribution(key, result.buildings);
+            failedAreas += result.failedAreas;
+            for (const status of result.areaStatuses) {
+              if (status === 'partial') partialAreas++;
+              else if (status === 'failed') continue;
+              else { completeAreas++; if (status === 'empty') emptyAreas++; }
+            }
           } catch (error) {
             if (finished || controller.signal.aborted) return;
             failedAreas += batch.length; lastError = error;

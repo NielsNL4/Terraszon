@@ -2,15 +2,25 @@ import type { FeatureCollection, Point } from 'geojson';
 import type { TreeFeature } from './types';
 import { OVERPASS_ENDPOINTS } from './terraces';
 import { stableTreeFraction, TREE_PROFILES, treeIdentity } from './tree-profiles';
-import { requestJSON } from './requests';
+import { aborted, requestJSON } from './requests';
+import type { DataBounds, DataCoverage } from './data-coverage';
 
-const MAX_TREES = 1_000;
+export const TREE_PAGE_SIZE = 1_000;
+const MAX_MUNICIPAL_PAGES = 4;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const EARTH_METERS_PER_DEGREE = 111_320;
 const GRONINGEN_TREES = 'https://services2.arcgis.com/chCSiGO4ORzXeSGk/arcgis/rest/services/Bomen_gemeente_Groningen/FeatureServer/0/query';
 const GRONINGEN_EXTENT = { south: 53.1, west: 6.3, north: 53.38, east: 6.85 };
 
-type Bounds = { south: number; west: number; north: number; east: number };
+type Bounds = DataBounds;
+export type TreeAreaData = {
+  trees: TreeFeature[];
+  status: DataCoverage;
+  source: 'groningen' | 'osm';
+  capped: boolean;
+  failed: boolean;
+  requests: number;
+};
 type TreeElement = { type: string; id: number; lat?: number; lon?: number; tags?: Record<string, string> };
 type MunicipalTree = {
   id?: number;
@@ -75,7 +85,7 @@ function treeFeature(id: string, latitude: number, longitude: number, height: nu
 }
 
 export function parseTrees(data: { elements: TreeElement[] }): TreeFeature[] {
-  return data.elements.slice(0, MAX_TREES).flatMap((element) => {
+  return data.elements.flatMap((element) => {
     if (element.type !== 'node' || element.tags?.natural !== 'tree'
       || !Number.isFinite(element.lat) || !Number.isFinite(element.lon)
       || Math.abs(element.lat!) > 85 || Math.abs(element.lon!) > 180) return [];
@@ -93,7 +103,7 @@ export function parseTrees(data: { elements: TreeElement[] }): TreeFeature[] {
 }
 
 export function parseMunicipalTrees(data: { features: MunicipalTree[] }): TreeFeature[] {
-  return data.features.slice(0, MAX_TREES).flatMap((feature) => {
+  return data.features.flatMap((feature) => {
     const coordinates = feature.geometry?.coordinates;
     const id = feature.properties?.OBJECTID ?? feature.id;
     if (feature.geometry?.type !== 'Point' || !Array.isArray(coordinates)
@@ -128,9 +138,16 @@ function intersectsGroningen(bounds: Bounds): boolean {
     && bounds.south < GRONINGEN_EXTENT.north && bounds.north > GRONINGEN_EXTENT.south;
 }
 
-async function fetchMunicipalTrees(bounds: Bounds, signal: AbortSignal): Promise<TreeFeature[]> {
+type MunicipalResponse = {
+  features?: Array<{ attributes?: MunicipalTree['properties']; geometry?: { x?: number; y?: number } }>;
+  exceededTransferLimit?: boolean;
+};
+
+async function fetchMunicipalTrees(bounds: Bounds, signal: AbortSignal,
+  request: (url: URL) => Promise<MunicipalResponse>, maximumPages: number): Promise<TreeAreaData> {
   const url = new URL(GRONINGEN_TREES);
-  url.searchParams.set('f', 'geojson');
+  // ArcGIS JSON exposes exceededTransferLimit reliably, unlike GeoJSON output.
+  url.searchParams.set('f', 'json');
   url.searchParams.set('where', '1=1');
   url.searchParams.set('geometryType', 'esriGeometryEnvelope');
   url.searchParams.set('geometry', JSON.stringify({
@@ -140,56 +157,102 @@ async function fetchMunicipalTrees(bounds: Bounds, signal: AbortSignal): Promise
   url.searchParams.set('inSR', '4326');
   url.searchParams.set('outSR', '4326');
   url.searchParams.set('outFields', 'OBJECTID,BOOMHOOGTE,BOOMSOORT,LATIJNSE_NAAM');
-  url.searchParams.set('resultRecordCount', String(MAX_TREES));
-  const payload = await requestJSON<{ features?: MunicipalTree[] }>(url, signal, 8_000);
-  if (!Array.isArray(payload.features)) throw new Error('Ongeldig resultaat van bomenkaart Groningen');
-  return parseMunicipalTrees({ features: payload.features });
+  url.searchParams.set('resultRecordCount', String(TREE_PAGE_SIZE));
+  url.searchParams.set('orderByFields', 'OBJECTID ASC');
+  const trees = new Map<string, TreeFeature>();
+  let offset = 0, valid = true;
+  const result = (status: DataCoverage, capped = false, failed = false): TreeAreaData =>
+    ({ trees: [...trees.values()], status, source: 'groningen', capped, failed, requests: 0 });
+  for (let page = 0; page < maximumPages; page++) {
+    url.searchParams.set('resultOffset', String(offset));
+    try {
+      const payload = await request(new URL(url));
+      if (signal.aborted) throw aborted(signal);
+      if (!Array.isArray(payload.features)) throw new Error('Ongeldig resultaat van bomenkaart Groningen');
+      const records = payload.features.slice(0, TREE_PAGE_SIZE);
+      const parsed = parseMunicipalTrees({ features: records.map(feature => ({
+        geometry: { type: 'Point', coordinates: [feature.geometry?.x, feature.geometry?.y] },
+        properties: feature.attributes,
+      })) });
+      valid &&= parsed.length === records.length;
+      const previousCount = trees.size;
+      for (const tree of parsed) trees.set(tree.properties.id, tree);
+      const more = payload.exceededTransferLimit === true
+        || (payload.exceededTransferLimit !== false && records.length === TREE_PAGE_SIZE);
+      if (payload.features.length > TREE_PAGE_SIZE) return result('partial', true);
+      if (!more) return result(valid ? (trees.size ? 'complete' : 'empty') : 'partial');
+      // An empty or repeated page cannot establish coverage, even if the
+      // server keeps claiming there are more records.
+      if (!records.length || trees.size === previousCount) return result('partial', true);
+      offset += records.length;
+    } catch (error) {
+      if (signal.aborted) throw aborted(signal);
+      if (!trees.size) throw error;
+      return result('partial', false, true);
+    }
+  }
+  return result('partial', true);
 }
 
-export async function fetchTrees(bounds: Bounds, signal: AbortSignal): Promise<TreeFeature[]> {
-  const values = [bounds.south, bounds.west, bounds.north, bounds.east].map((value) => value.toFixed(4));
-  const key = `terraszon:v4:trees:${values.join(':')}`;
+export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumRequests = 6): Promise<TreeAreaData> {
+  if (signal.aborted) throw aborted(signal);
+  const values = [bounds.south, bounds.west, bounds.north, bounds.east].map((value, index) => {
+    const scaled = value * 1_000_000;
+    return ((index < 2 ? Math.floor(scaled) : Math.ceil(scaled)) / 1_000_000).toFixed(6);
+  });
+  const key = `terraszon:v5:trees:${values.join(':')}`;
   try {
     const cached = localStorage.getItem(key);
     if (cached) {
-      const parsed = JSON.parse(cached) as { savedAt: number; trees: TreeFeature[] };
-      if (Array.isArray(parsed.trees) && parsed.trees.length
-        && Date.now() - parsed.savedAt < CACHE_TTL) return parsed.trees;
+      const parsed = JSON.parse(cached) as { savedAt: number; data: TreeAreaData };
+      if (parsed.data?.status === 'complete' && ['groningen', 'osm'].includes(parsed.data.source)
+        && Array.isArray(parsed.data.trees) && parsed.data.trees.length && parsed.data.trees.length <= TREE_PAGE_SIZE * MAX_MUNICIPAL_PAGES
+        && Number.isFinite(parsed.savedAt) && Date.now() - parsed.savedAt < CACHE_TTL) {
+        return { ...parsed.data, requests: 0 };
+      }
     }
   } catch { /* A blocked cache should not prevent loading trees. */ }
 
-  if (intersectsGroningen(bounds)) {
+  let requests = 0;
+  const save = (data: TreeAreaData): TreeAreaData => {
+    if (signal.aborted) throw aborted(signal);
+    const result = { ...data, requests };
+    if (result.status === 'complete' && result.trees.length) {
+      try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: result })); } catch { /* Cache is optional. */ }
+    }
+    return result;
+  };
+  if (intersectsGroningen(bounds) && maximumRequests > 0) {
     try {
-      const municipalTrees = await fetchMunicipalTrees(bounds, signal);
-      if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-      if (municipalTrees.length) {
-        try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), trees: municipalTrees })); } catch { /* Cache is optional. */ }
-        return municipalTrees;
-      }
-    } catch (error) {
-      if (signal.aborted) throw error;
+      const municipal = await fetchMunicipalTrees({ south: Number(values[0]), west: Number(values[1]),
+        north: Number(values[2]), east: Number(values[3]) }, signal, (url) => {
+        requests++;
+        return requestJSON<MunicipalResponse>(url, signal, 8_000);
+      }, Math.min(MAX_MUNICIPAL_PAGES, maximumRequests));
+      if (municipal.status !== 'empty') return save(municipal);
+    } catch {
+      if (signal.aborted) throw aborted(signal);
       // The worldwide OSM source remains available when the municipal service fails.
     }
   }
 
-  const query = `[out:json][timeout:20];node["natural"="tree"](${values.join(',')});out body ${MAX_TREES};`;
-  let lastError: unknown;
+  const query = `[out:json][timeout:20];node["natural"="tree"](${values.join(',')});out body ${TREE_PAGE_SIZE + 1};`;
   for (const endpoint of OVERPASS_ENDPOINTS) {
-    if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
+    if (signal.aborted) throw aborted(signal);
+    if (requests >= maximumRequests) break;
     try {
+      requests++;
       const payload = await requestJSON<{ elements: TreeElement[]; remark?: string }>(endpoint, signal, 8_000,
         { method: 'POST', body: new URLSearchParams({ data: query }) });
       if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
-      const trees = parseTrees(payload);
-      if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-      if (trees.length) {
-        try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), trees })); } catch { /* Cache is optional. */ }
-      }
-      return trees;
-    } catch (error) {
-      if (signal.aborted) throw error;
-      lastError = error;
+      const records = payload.elements.slice(0, TREE_PAGE_SIZE);
+      const trees = parseTrees({ elements: records });
+      const capped = payload.elements.length > TREE_PAGE_SIZE;
+      return save({ trees, source: 'osm', status: capped || trees.length !== records.length ? 'partial' : trees.length ? 'complete' : 'empty',
+        capped, failed: false, requests });
+    } catch {
+      if (signal.aborted) throw aborted(signal);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('Geen Overpass-server beschikbaar');
+  return { trees: [], source: 'osm', status: 'failed', capped: false, failed: true, requests };
 }

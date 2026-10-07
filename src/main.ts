@@ -344,8 +344,10 @@ async function loadTrees(bounds: ViewBounds, zoom: number): Promise<void> {
   treeRequest = request;
   treeLoadBounds = bufferedTreeBounds(bounds);
   try {
-    const nextTrees = await fetchVisibleTrees(bounds, request.signal);
+    const result = await fetchVisibleTrees(bounds, request.signal);
     if (request.signal.aborted || !treesEnabled) return;
+    if (result.status === 'failed') throw new Error('Geen boomgegevens beschikbaar');
+    const nextTrees = result.trees;
     const key = treeDataKey(nextTrees);
     if (key !== appliedTrees) {
       trees = nextTrees;
@@ -353,9 +355,11 @@ async function loadTrees(bounds: ViewBounds, zoom: number): Promise<void> {
       terraceMap.setTrees(trees);
       updateObstacles(false, true);
     }
-    treeStatus.textContent = trees.length
-      ? `${trees.length} bomen${trees.length === 1_000 ? ' (maximum)' : ''} · boomvorm en bladstand zijn geschat.`
-      : 'Geen ingetekende bomen in dit kaartbeeld.';
+    const source = result.sources.map(value => value === 'groningen' ? 'gemeente Groningen' : 'OpenStreetMap').join(' / ');
+    treeStatus.textContent = result.status === 'partial'
+      ? `${trees.length} bomen · gedeeltelijke boomdekking${result.failedAreas ? '; sommige gebieden konden niet laden' : '; zoom in of verplaats de kaart voor meer gegevens'}.`
+      : trees.length ? `${trees.length} bomen${result.renderLimited ? ' (maximaal 1.000 getoond)' : ''} · ${source} · boomvorm en bladstand zijn geschat.`
+        : 'Geen ingetekende bomen in dit kaartbeeld.';
   } catch (error) {
     if (request.signal.aborted) return;
     treeStatus.textContent = trees.length ? 'Nieuwe bomen konden niet laden. Bestaande bomen blijven zichtbaar.' : 'Bomen konden niet laden. Verplaats de kaart om opnieuw te proberen.';
@@ -375,7 +379,8 @@ async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise
   }
   const key = buildingViewKey(bounds, mobileLayout.matches);
   if (buildingTypeRequest && !buildingTypeRequest.signal.aborted && buildingLoadKey === key) return;
-  if (loadedBuildingKey === key && loadedBuildingSummary && Date.now() - loadedBuildingAt < 24 * 60 * 60 * 1000) {
+  if (loadedBuildingKey === key && loadedBuildingSummary
+    && Date.now() - loadedBuildingAt < (loadedBuildingSummary.emptyAreas > 0 ? 60_000 : 24 * 60 * 60 * 1000)) {
     buildingStatus.textContent = `${loadedBuildingSummary.totalBuildings} gebouwen · ${loadedBuildingSummary.typedBuildings} met een specifiek type · geladen.`;
     retryBuildings.hidden = true;
     return;
@@ -390,15 +395,15 @@ async function loadBuildingCategories(bounds: ViewBounds, zoom: number): Promise
     if (request.signal.aborted) return;
     const detail = `${data.totalBuildings} gebouwen · ${data.typedBuildings} met een specifiek type`;
     buildingStatus.textContent = loading
-      ? `${detail} · laden ${data.loadedAreas}/${data.totalAreas} gebieden…`
-      : `${detail}${data.failedAreas ? ' · deels geladen; overige gebouwen zijn neutraal.' : data.capped ? ' · zoom verder in voor de overige gebieden.' : ' · geladen.'}`;
-    retryBuildings.hidden = loading || data.failedAreas === 0;
+      ? `${detail} · ${data.completeAreas}/${data.totalAreas} gebieden volledig; ${data.loadedAreas}/${data.totalAreas} verwerkt…`
+      : `${detail}${data.failedAreas ? ' · deels geladen; overige gebouwen zijn neutraal.' : data.status === 'partial' ? ' · gedeeltelijke dekking; zoom verder in voor de overige gebieden.' : ' · geladen.'}`;
+    retryBuildings.hidden = loading || (data.failedAreas === 0 && data.partialAreas === 0);
   };
   try {
     const result = await terraceMap.loadBuildings(bounds, mobileLayout.matches, request.signal, (data) => apply(data, true));
     if (request.signal.aborted) return;
     apply(result, false);
-    if (!result.failedAreas && !result.capped) { loadedBuildingKey = key; loadedBuildingAt = Date.now(); loadedBuildingSummary = result; }
+    if (result.status === 'complete' || result.status === 'empty') { loadedBuildingKey = key; loadedBuildingAt = Date.now(); loadedBuildingSummary = result; }
   } catch (error) {
     if (request.signal.aborted) return;
     buildingStatus.textContent = 'Nieuwe gebouwtypes konden niet laden. Bestaande kleuren blijven behouden.';

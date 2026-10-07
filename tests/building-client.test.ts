@@ -21,7 +21,8 @@ describe('gebouwworker watchdog', () => {
     await result;
     expect(fake.postMessage).toHaveBeenLastCalledWith({ type: 'cancel', id });
     fake.onmessage!({ data: { type: 'complete', id, data: { totalBuildings: 1, typedBuildings: 1,
-      revision: 1, loadedAreas: 1, totalAreas: 1, failedAreas: 0, capped: false } } } as MessageEvent<BuildingResponse>);
+      revision: 1, loadedAreas: 1, totalAreas: 1, failedAreas: 0, capped: false,
+      completeAreas: 1, emptyAreas: 0, partialAreas: 0, status: 'complete', source: 'osm' } } } as MessageEvent<BuildingResponse>);
     expect(update).not.toHaveBeenCalled();
     client.destroy();
   });

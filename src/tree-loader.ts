@@ -1,10 +1,22 @@
-import { fetchTrees } from './trees';
+import { fetchTrees, type TreeAreaData } from './trees';
 import { describeTree } from './tree-profiles';
 import type { TreeFeature } from './types';
+import { splitDataBounds, type DataCoverage } from './data-coverage';
+import { aborted } from './requests';
 export { treeDataKey } from './tree-profiles';
 
 export type TreeBounds = { south: number; west: number; north: number; east: number };
 const TTL = 24 * 60 * 60 * 1000;
+const EMPTY_TTL = 60_000;
+const MAX_RENDER_TREES = 1_000;
+export type TreeViewData = {
+  trees: TreeFeature[];
+  status: DataCoverage;
+  capped: boolean;
+  renderLimited: boolean;
+  failedAreas: number;
+  sources: TreeAreaData['source'][];
+};
 const contains = (outer: TreeBounds, inner: TreeBounds) => outer.south <= inner.south && outer.north >= inner.north
   && outer.west <= inner.west && outer.east >= inner.east;
 const overlaps = (a: TreeBounds, b: TreeBounds) => a.south <= b.north && a.north >= b.south && a.west <= b.east && a.east >= b.west;
@@ -31,33 +43,86 @@ export function missingTreeBounds(target: TreeBounds, coverage: TreeBounds[]): T
   return pending;
 }
 
-export function createTreeViewLoader(fetchArea = fetchTrees) {
-  const regions: Array<{ bounds: TreeBounds; trees: TreeFeature[]; savedAt: number }> = [];
-  return async (view: TreeBounds, signal: AbortSignal): Promise<TreeFeature[]> => {
-    if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-    for (let i = regions.length - 1; i >= 0; i--) if (Date.now() - regions[i].savedAt > TTL) regions.splice(i, 1);
-    const covered = regions.find(region => contains(region.bounds, view));
+export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumRequests?: number; maximumDepth?: number } = {}) {
+  const regions: Array<{ bounds: TreeBounds; data: TreeAreaData; savedAt: number }> = [];
+  const complete = (data: TreeAreaData) => data.status === 'complete' || data.status === 'empty';
+  return async (view: TreeBounds, signal: AbortSignal): Promise<TreeViewData> => {
+    if (signal.aborted) throw aborted(signal);
+    for (let i = regions.length - 1; i >= 0; i--) {
+      const ttl = regions[i].data.status === 'empty' ? EMPTY_TTL : TTL;
+      if (Date.now() - regions[i].savedAt > ttl) regions.splice(i, 1);
+    }
+    const coverage = () => regions.filter(region => complete(region.data)).map(region => region.bounds);
+    const covered = regions.find(region => complete(region.data) && contains(region.bounds, view));
     const target = covered?.bounds ?? bufferedTreeBounds(view);
-    const missing = covered ? [] : missingTreeBounds(target, regions.map(region => region.bounds));
+    const missing = covered ? [] : missingTreeBounds(target, coverage());
     // A far jump should be one request, not many tiny fragments.
     const areas = missing.length > 4 ? [target] : missing;
-    for (const area of areas) {
-      const trees = await fetchArea(area, signal);
-      if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
-      if (trees.length) regions.push({ bounds: area, trees, savedAt: Date.now() });
-      while (regions.length > 12 || regions.reduce((n, region) => n + region.trees.length, 0) > 8_000) regions.shift();
+    let requests = 0, failedAreas = 0, capped = false;
+    const maximumRequests = options.maximumRequests ?? 12;
+    const load = async (area: TreeBounds, depth: number): Promise<void> => {
+      if (signal.aborted) throw aborted(signal);
+      if (requests >= maximumRequests) { capped = true; return; }
+      let data: TreeAreaData;
+      try {
+        data = await fetchArea(area, signal, maximumRequests - requests);
+      } catch {
+        if (signal.aborted) throw aborted(signal);
+        requests++;
+        failedAreas++;
+        return;
+      }
+      if (signal.aborted) throw aborted(signal);
+      requests += data.requests;
+      if (data.failed) failedAreas++;
+      if (data.status === 'failed') return;
+      // Partial records remain usable, but are never treated as covered. A
+      // shorter partial retry must not erase records already seen in this area.
+      const retained = new Map<string, TreeFeature>();
+      for (let i = regions.length - 1; i >= 0; i--) {
+        if (contains(area, regions[i].bounds) && contains(regions[i].bounds, area)) {
+          if (data.status === 'partial' && regions[i].data.source === data.source) {
+            for (const tree of regions[i].data.trees) retained.set(tree.properties.id, tree);
+          }
+          regions.splice(i, 1);
+        }
+      }
+      for (const tree of data.trees) retained.set(tree.properties.id, tree);
+      data = { ...data, trees: [...retained.values()] };
+      regions.push({ bounds: area, data, savedAt: Date.now() });
+      if (data.capped) {
+        const children = depth < (options.maximumDepth ?? 3) ? splitDataBounds(area) : [];
+        if (!children.length) capped = true;
+        for (const child of children) await load(child, depth + 1);
+      }
+    };
+    for (const area of areas) await load(area, 0);
+    // Drop superseded parent snapshots once all their child areas are covered.
+    const coveredBounds = coverage();
+    for (let i = regions.length - 1; i >= 0; i--) {
+      if (!complete(regions[i].data) && !missingTreeBounds(regions[i].bounds, coveredBounds).length) regions.splice(i, 1);
     }
+    while (regions.length > 32 || regions.reduce((n, region) => n + region.data.trees.length, 0) > 12_000) regions.shift();
     const unique = new Map<string, TreeFeature>();
+    const sources = new Set<TreeAreaData['source']>();
     for (const region of regions) if (overlaps(region.bounds, target)) {
-      for (const tree of region.trees) unique.set(tree.properties.id, tree);
+      sources.add(region.data.source);
+      for (const tree of region.data.trees) unique.set(tree.properties.id, tree);
     }
     const center = [(view.west + view.east) / 2, (view.south + view.north) / 2];
+    const longitudeScale = Math.cos(center[1] * Math.PI / 180);
     const ranked = [...unique.values()].map(tree => ({ tree, info: describeTree(tree) }))
       .filter(({ info }) => info.longitude >= target.west && info.longitude <= target.east && info.latitude >= target.south && info.latitude <= target.north)
       .sort((a, b) => {
-        const distance = (info: typeof a.info) => (info.longitude - center[0]) ** 2 + (info.latitude - center[1]) ** 2;
+        const visible = (info: typeof a.info) => info.longitude >= view.west && info.longitude <= view.east
+          && info.latitude >= view.south && info.latitude <= view.north;
+        if (visible(a.info) !== visible(b.info)) return visible(a.info) ? -1 : 1;
+        const distance = (info: typeof a.info) => ((info.longitude - center[0]) * longitudeScale) ** 2 + (info.latitude - center[1]) ** 2;
         return distance(a.info) - distance(b.info);
-      }).slice(0, 1_000).map(({ tree }) => tree).sort((a, b) => a.properties.id.localeCompare(b.properties.id));
-    return ranked;
+      });
+    const trees = ranked.slice(0, MAX_RENDER_TREES).map(({ tree }) => tree).sort((a, b) => a.properties.id.localeCompare(b.properties.id));
+    const uncovered = missingTreeBounds(target, coverage()).length > 0;
+    return { trees, capped: capped && uncovered, renderLimited: ranked.length > MAX_RENDER_TREES, failedAreas, sources: [...sources].sort(),
+      status: uncovered ? (trees.length || sources.size ? 'partial' : 'failed') : trees.length ? 'complete' : 'empty' };
   };
 }

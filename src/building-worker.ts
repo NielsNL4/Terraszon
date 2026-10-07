@@ -14,6 +14,7 @@ const generic = new Set(['yes', 'unknown', 'undefined', 'unclassified', 'unident
 const summary = (data: BuildingData): BuildingSummary => {
   if (geometry.setKnown(data.buildings)) revision++;
   return { capped: data.capped, failedAreas: data.failedAreas, loadedAreas: data.loadedAreas, totalAreas: data.totalAreas,
+    completeAreas: data.completeAreas, emptyAreas: data.emptyAreas, partialAreas: data.partialAreas, status: data.status, source: data.source,
     totalBuildings: data.buildings.length, typedBuildings: data.buildings.filter(b => !generic.has(b.properties.buildingType)).length, revision };
 };
 scope.onmessage = (event) => {
