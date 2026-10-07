@@ -130,9 +130,21 @@ De kleine, gecontroleerde Groningen-selectie koppelt OSM-node 918944223 (Huis De
 
 Referenties: [opening_hours API](https://github.com/opening-hours/opening_hours.js#library-api), [Commons Imageinfo](https://www.mediawiki.org/wiki/API:Imageinfo), [Commons hergebruik](https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia). Beelddekking is beperkt tot beschikbare, gekoppelde of gecontroleerde bestanden; de volledige fotoshow en leesbare openingstijdenbediening volgen in F3.
 
+## Dagzonrapport
+
+Open een horecaplek, gezocht adres of eigen plek en kies **Bekijk zonrapport**. Het rapport wordt pas dan berekend. Het toont circa directe zonduur, aandeel daglicht, de langste zonperiode en de lichtstatus bij het gekozen tijdstip, met resterende of volgende directe zon waar berekend. Opkomst, ondergang en daglichtduur staan eronder. **Alle lichtperioden**, **Zonhoogte en richting** en **Data en modelbeperkingen** klappen afzonderlijk open.
+
+De rapporttijdlijn en de kaarttijd volgen elkaar. De kleurstrook heeft tekstlabels voor directe zon, gebouwschaduw, mogelijk gefilterd licht, nacht en onbekend; de vensterlijst is met toetsenbord bedienbaar. Tijdkeuze is per minuut, terwijl de berekening iedere vijf minuten samplet en gevonden overgangen tot circa één minuut verfijnt. Rond zomer-/wintertijd volgt de rapporttijdlijn de werkelijke dagduur; UTC-offsets onderscheiden de dubbele kloktijd in het najaar.
+
+**Pas zitpunt aan** laat je een tijdelijke grondpositie kiezen door op de kaart te tikken, de pin te slepen of coördinaten in te vullen. **Gebruik dit punt** past het toe; **Annuleren** of Escape bewaart het eerdere punt. De oorspronkelijke horeca-/adrespin verandert niet. Wil je het punt bewaren, sla de plek op en gebruik **Bewerken → Bewaren**; het formulier begint bij de geselecteerde zitpositie. Een nieuwe selectie herstelt het opgeslagen punt of, zonder eigen punt, de bronpositie. Dit is geen balkonhoogte-analyse.
+
+Een andere datum, toegepast zitpunt of bomeninstelling wist oude rapportuitkomsten en start een nieuwe berekening als het rapport open is. Kaartbeweging en tijdkeuze hergebruiken de daganalyse. Tijdens laden kun je annuleren; na een fout kun je opnieuw proberen of het punt aanpassen. Onvolledige obstakeldata blijven expliciet vermeld: onbekende perioden zijn geen zekere zon en mogelijk gefilterd licht telt niet als directe zon. De modeluitleg bevat een actie om opnieuw te berekenen.
+
+Het paneel blijft standaard gesloten. Een geopend rapport geeft mobiel meer scrollruimte, met de kaart en klok bereikbaar. De uitkomsten blijven modelschattingen, geen weersvoorspelling of bewezen praktijknauwkeurigheid. Het jaaroverzicht en de dagdeelgrafieken volgen in F5.
+
 ## Puntgebonden zonrapport-engine
 
-`src/sun-report-client.ts` levert de technische dag-/jaaranalyse voor F4/F5. Maak één client aan en geef de exacte grond-/zitpositie met een stabiel analysepunt-ID door; een horecabronpin is niet automatisch die positie. De worker laadt een eigen obstakelgebied rond het punt en ontvangt geen kaartviewport of gerenderde tilehoogtes.
+`src/sun-report-client.ts` levert de technische dag-/jaaranalyse. F4 gebruikt de daganalyse via `src/day-report-controller.ts` en `src/day-report-view.ts`; F5 sluit later de jaaranalyse aan. Maak één client aan en geef de exacte grond-/zitpositie met een stabiel analysepunt-ID door; een horecabronpin is niet automatisch die positie. De worker laadt een eigen obstakelgebied rond het punt en ontvangt geen kaartviewport of gerenderde tilehoogtes.
 
 ```ts
 import { createSunReportClient } from './sun-report-client';
@@ -150,7 +162,7 @@ Vensters bevatten epoch-milliseconden; duurvelden en dagdeeltotalen zijn minuten
 
 Sampling gebeurt iedere vijf minuten met circa één minuut verfijning voor gevonden overgangen; kortere perioden kunnen worden gemist. Daglicht is de zonmiddelpuntstand boven de horizon. Opkomst en ondergang volgen de eigen standaardhorizon van SunCalc. Jaarresultaten zijn twaalf representatieve maanddagen en vier afzonderlijke seizoensdagen, geen maandgemiddelden. Tijd en dagdelen volgen de browsertijdzone; dagen rond zomer-/wintertijd kunnen 23 of 25 uur duren.
 
-Een nieuwe aanvraag vervangt de actieve taak van dezelfde client. Resultaten en voorbereide obstakels worden begrensd hergebruikt op basis van punt, datum, instellingen, revision en modelversie. `invalidate()` wist rapport-/snapshotcaches en annuleert de actieve analyse; onderliggende broncaches behouden hun bestaande TTL. De productiebuild bevat een afzonderlijke `sunReports`-entry en een lazy rapportworker, ook bruikbaar op een genest GitHub Pages-pad. De technische fase T5 is afgerond; de interface volgt in F4/F5 en buitenvalidatie volgt later. Zie [T5 in de roadmap](./ROADMAP.md#t5--zonrapport-engine-per-analysepunt).
+Een nieuwe aanvraag vervangt de actieve taak van dezelfde client. Resultaten en voorbereide obstakels worden begrensd hergebruikt op basis van punt, datum, instellingen, revision en modelversie. `invalidate()` wist rapport-/snapshotcaches en annuleert de actieve analyse; onderliggende broncaches behouden hun bestaande TTL. De productiebuild bevat een afzonderlijke `sunReports`-entry en een lazy rapportworker, ook bruikbaar op een genest GitHub Pages-pad. De technische fase T5 en daginterface F4 zijn afgerond; het jaaroverzicht volgt in F5 en buitenvalidatie volgt later. Zie [de roadmap](./ROADMAP.md).
 
 ## Nauwkeurigheid en beperkingen
 

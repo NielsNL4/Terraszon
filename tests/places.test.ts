@@ -58,6 +58,19 @@ describe('gedeeld locatiemodel', () => {
     expect(selection.get()?.place.id).toBe(own.id);
   });
 
+  it('houdt een tijdelijk zitpunt apart van bron en opslag, behoudt het bij refresh en wist het bij selectie', () => {
+    const place = venue(), saved = savePlaceRecord(place, undefined, { analysisPoints: [{ id: 'seat', label: 'Zitpunt', coordinates: [6.571, 53.211] }] }, 100);
+    const selection = createPlaceSelection(() => saved); selection.select(place);
+    selection.setAnalysisPoint([6.572, 53.212]);
+    const snapshot = selection.get()!; snapshot.analysisPoint.coordinates[0] = 0;
+    selection.refresh({ ...place, name: 'Bijgewerkt' });
+    expect(selection.get()?.analysisPoint).toMatchObject({ label: 'Tijdelijk zitpunt', coordinates: [6.572, 53.212] });
+    expect(selection.get()?.place.coordinates).toEqual([6.57, 53.21]); expect(saved.personal.analysisPoints[0].coordinates).toEqual([6.571, 53.211]);
+    expect(() => selection.setAnalysisPoint([NaN, 53])).toThrow();
+    selection.select(place); expect(selection.get()?.analysisPoint.coordinates).toEqual([6.571, 53.211]);
+    selection.select(null); selection.setAnalysisPoint([6, 53]); expect(selection.get()).toBeNull();
+  });
+
   it('bewaart bij beperkte providers alleen identifiers en persoonlijke gegevens', () => {
     const restricted: Place = { ...venue(), id: 'google:place-id', sources: [{ provider: 'google', id: 'place-id',
       storage: 'reference-only', url: 'https://example.test/privileged' }] };

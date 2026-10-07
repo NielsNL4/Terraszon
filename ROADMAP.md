@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1 en F2 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1, F2 en F4 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -41,7 +41,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1 en F2 zijn uitge
 | F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Afgerond — 7 oktober 2026 |
 | F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Afgerond — 7 oktober 2026 |
 | F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Geparkeerd op gebruikersverzoek |
-| F4 | Dagzonrapport voor iedere locatie | T5, F1 | Open |
+| F4 | Dagzonrapport voor iedere locatie | T5, F1 | Afgerond — 7 oktober 2026 |
 | F5 | Jaaroverzicht en dagdeelgrafieken | F4 | Open |
 | F6 | Selecteren op zonneduur en deelbare locaties | F2, F3, F4; evaluatie T6 | Open, later |
 
@@ -339,6 +339,18 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Rapport voor een punt op grondniveau wordt niet gepresenteerd als balkonhoogte-analyse.
 
 **Commit:** `Add daily sun reports for selected locations`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- On-demand dagrapport toegevoegd aan het bestaande detailpaneel voor horeca, adressen en eigen/persoonlijke plekken. Het paneel blijft standaard gesloten. Geopend rapport toont circa zonduur, aandeel daglicht, langste periode, actuele en resterende/volgende zon, opkomst/ondergang/daglichtduur en uitklapbare lichtperioden, zonnestand en model-/bronbeperkingen.
+- Native rapporttijdlijn en kaartklok volgen elkaar in beide richtingen, met minuutbediening en tekstuele toestanden naast kleur. De vensterlijst kiest de kaarttijd. De rapporttijdlijn volgt epoch-tijd en 23-/25-uursdagen; UTC-offsets maken de herhaalde kloktijd zichtbaar. Sampling blijft de 5-minuten-/circa 1-minuutbenadering van T5, zonder fijnere nauwkeurigheidsclaim.
+- Tijdelijke zitpositie via kaartklik/draggable pin of coördinaten, met expliciete toepassen/annuleren en Escape. Bronpin en persoonlijke opslag blijven apart. Bewerken begint bij het gekozen zitpunt zodat expliciet Bewaren het als persoonlijk punt kan vastleggen; extra bestaande analysepunten worden behouden. Nieuwe selectie herstelt opgeslagen/defaultpositie.
+- Datum, toegepast punt en bomeninstelling wissen oude uitkomsten voordat nieuw werk start. Camera en tijdwijzigingen starten geen dagberekening. Controller-generaties en abort weren late oude replies. Laden/annuleren, fout/retry, gedeeltelijke gegevens en herberekenen zijn aangesloten; live aankondigingen en focusherstel blijven begrensd. Pagehide ruimt de worker op en bfcache-terugkeer hervat een open rapport.
+- Eindchecks geslaagd: `npm run lint` (Oxlint), `npm test` (210 tests in 27 bestanden), `npm run build` en `git diff --check`. Nieuwe regressies controleren aanvraagmoment, bron-/tijd-/puntinvalidatie, abort/late voortgang, retry, presentatietekst en tijdelijke puntisolatie.
+- Native Chromium-browserflows geslaagd voor horeca/adres/eigen plek, gekoppelde sliders/toetsenbord/vensterselectie, hergebruik na kaartbeweging, coördinaten en kaartklik, Escape, bewaren met behouden bronpositie, onvolledige data, fout/herstel, annulering, poolnacht, late datumreplies en het dubbele wintertijduur. Synthetische Test-locaties en gecontroleerde rapportworkerresponses; echte MapLibre, opslag, selectie en klokgedrag.
+- Gezamenlijke desktop-/mobielcontrole en bevestiging op 1366×900, 390×844, 320×740, 844×390 en gesimuleerd 390×400-toetsenbordviewport: paneel/kaartklok bereikbaar, geen pagina-/veld-overflow of bedieningsoverlap. Rapportinhoud scrollt binnen het bestaande paneel.
+- Afzonderlijke productieflow onder `/Terraszon/` geslaagd met de echte native rapportworker, SunCalc en gedeelde netwerkbroker: geen rapportworker bij kaartstart, één hergebruikte worker na de rapportactie, twee daguitkomsten, geen extra aanvraag bij tijdkeuze, selectie van de laatste minuut 23:59 en correcte 1.500-minutentijdlijn met tweede 02:30. Bronresponses zijn synthetische volledige leegte; dit is integratiebewijs, geen praktijkzonmeting. Een eerste fixture miste POST-querydecodering en is gecorrigeerd; geen productiecodefix daarvoor nodig.
+- Onafhankelijke visuele finish-review gaf `ship` voor de beoordeelde F4-uitbreiding, zonder materiële fixes. De mechanische detector gaf één radiusadvies; de legendaswatch gebruikt nu de bestaande 3px-schaal. De persistente live-aankondiging is gededupliceerd en de eindflow bevestigd. Documentatiecontrole bevestigde behoud van de bestaande stijl; DESIGN.md en zijn sidecar zijn behouden.
+- Bewijsgrenzen: geen buitenvalidatie, FPS-benchmark of volledige assistieve-technologieaudit. Tijd volgt de browser; geen wereldwijde tijdzonelookup. Geen balkon-/weer-/parasolgarantie. De bestaande grote-bundlewaarschuwing blijft aanwezig. Volgende fase: F5, jaaroverzicht en dagdeelgrafieken.
 
 ### F5 — Jaaroverzicht en dagdeelgrafieken
 

@@ -49,6 +49,8 @@ export function createPlacePanel(root: HTMLElement, options: {
   getMapCenter: () => PlaceCoordinates;
   onPointEditing: (coordinates: PlaceCoordinates | null) => void;
   onFocusMap: () => void;
+  reportElement: HTMLElement;
+  onEditStart: () => void;
 }) {
   root.innerHTML = `
     <header class="place-panel-header">
@@ -153,9 +155,10 @@ export function createPlacePanel(root: HTMLElement, options: {
   };
   const startEditor = (place?: Place) => {
     if (!context) return;
+    options.onEditStart();
     const target = place ?? customPlace('Nieuwe plek', options.getMapCenter());
     const saved = options.store.get(target.id);
-    const coordinates = saved?.personal.analysisPoints[0]?.coordinates ?? target.coordinates;
+    const coordinates = selection?.place.id === target.id ? selection.analysisPoint.coordinates : saved?.personal.analysisPoints[0]?.coordinates ?? target.coordinates;
     root.classList.add('is-editing'); root.classList.remove('is-saved-list'); body.replaceChildren(); body.scrollTop = 0;
     heading.textContent = place ? 'Plek bewerken' : 'Plek toevoegen'; heading.title = '';
     queryRow.hidden = true; sections.hidden = true; back.hidden = false;
@@ -237,6 +240,7 @@ export function createPlacePanel(root: HTMLElement, options: {
       body.append(summary);
       const address = place.address;
       if (address) body.append(node('p', 'place-address', address));
+      body.append(options.reportElement);
       if (place.kind !== 'venue') {
         message('Een plek op de kaart', 'Aan dit punt zijn geen horecagegevens gekoppeld. De geselecteerde positie blijft op de kaart gemarkeerd.');
       } else {

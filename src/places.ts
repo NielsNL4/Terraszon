@@ -165,17 +165,22 @@ export type PlaceSelection = { place: Place; name: string; analysisPoint: Analys
 
 export function createPlaceSelection(lookup: (id: string) => SavedPlace | undefined = () => undefined) {
   let selected: Place | null = null;
+  let analysisOverride: AnalysisPoint | null = null;
   const listeners = new Set<(selection: PlaceSelection | null) => void>();
   const snapshot = (): PlaceSelection | null => {
     if (!selected) return null;
     const personal = lookup(selected.id)?.personal;
     return structuredClone({ place: selected, name: personal?.name ?? selected.name,
-      analysisPoint: personal?.analysisPoints[0] ?? { id: `${selected.id}:default`, label: 'Locatiepunt', coordinates: selected.coordinates } });
+      analysisPoint: analysisOverride ?? personal?.analysisPoints[0] ?? { id: `${selected.id}:default`, label: 'Locatiepunt', coordinates: selected.coordinates } });
   };
   const notify = () => { for (const listener of listeners) listener(snapshot()); };
   return {
     get: snapshot,
-    select(place: Place | null) { selected = place ? structuredClone(place) : null; notify(); },
+    select(place: Place | null) { selected = place ? structuredClone(place) : null; analysisOverride = null; notify(); },
+    setAnalysisPoint(coordinates: PlaceCoordinates) {
+      if (!selected) return;
+      analysisOverride = { id: `${selected.id}:temporary`, label: 'Tijdelijk zitpunt', coordinates: placeCoordinates(coordinates) }; notify();
+    },
     refresh(place: Place) { if (selected?.id === place.id) { selected = structuredClone(place); notify(); } },
     subscribe(listener: (selection: PlaceSelection | null) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };

@@ -24,7 +24,7 @@ De kaart is het primaire werkvlak, op desktop en mobiel. Gebruikers zoeken een a
 - Datum/tijd, locatiezoeken, browserlocatie, horeca en indicatieve gebouw-/boomschaduw zijn aanwezig.
 - Persoonlijke locaties blijven lokaal zonder account. Mijn plekken biedt opslaan, eigen punten, naam/type/notitie, bewerken/verwijderen en handmatige GeoJSON-import/export.
 - Gratis databronnen eerst. T4 biedt herleidbare restaurantvelden, afzonderlijke uren en gelicentieerde Wikimedia-metadata; F3 verzorgt de rijkere weergave. Beelddekking moet per locatie worden gecontroleerd.
-- Het geplande zonrapport bevat dagelijkse zonduur en een maand-/seizoensvergelijking, naar de aangeleverde Coffee in the Sun-referentie.
+- Het dagzonrapport is beschikbaar voor horeca, adressen en eigen/persoonlijke punten, met zonduur, daglichtaandeel, langste en resterende/volgende zonperiode en een tijdlijn gekoppeld aan de kaarttijd. Het grond-/zitpunt is tijdelijk aanpasbaar zonder de bronpin te veranderen. Maand-/seizoensvergelijking en dagdeelgrafieken volgen in F5, naar de aangeleverde Coffee in the Sun-referentie.
 - Zon volgens de geometrie is geen weersvoorspelling. Boomafscherming is een schatting; onbekende data moet herkenbaar blijven.
 - Restaurantpins zijn niet automatisch exacte terrasposities. Analysepunten en bronposities zijn afzonderlijk gemodelleerd.
 - Bouwvolgorde, scope, controles en één commit per fase staan in ROADMAP.md.

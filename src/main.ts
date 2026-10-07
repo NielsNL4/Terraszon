@@ -1,6 +1,8 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import './place-panel.css';
+import './day-report.css';
+import { createDayReportView } from './day-report-view';
 import { createTerraceMap, type ViewBounds } from './map';
 import { buildingViewKey, type BuildingSummary } from './building-protocol';
 import { PALETTE_STORAGE_KEY } from './building-palette';
@@ -98,10 +100,10 @@ app.innerHTML = `
       </div>
 
       <label class="slider-label" for="time">
-        <span>00:00</span><span>Tijdstip</span><span>23:55</span>
+        <span>00:00</span><span>Tijdstip</span><span>23:59</span>
       </label>
       <div class="timeline">
-        <input id="time" class="time-slider" type="range" aria-label="Tijdstip" min="0" max="1435" step="5" value="${currentMinutes}" />
+        <input id="time" class="time-slider" type="range" aria-label="Tijdstip" min="0" max="1439" step="1" value="${currentMinutes}" />
         <div class="timeline-events">
           <span id="sunrise-event" class="sun-event sunrise-event" role="img" hidden>${solarEventIcon(true)}<span></span></span>
           <span id="sunset-event" class="sun-event sunset-event" role="img" hidden>${solarEventIcon(false)}<span></span></span>
@@ -246,9 +248,38 @@ let terraceStatusUnavailable = false;
 let userCoordinates: PlaceCoordinates | null = null;
 let selectionOrigin: HTMLElement | undefined;
 let draftCoordinates: PlaceCoordinates | null = null;
+let reportDraftCoordinates: PlaceCoordinates | null = null;
+let reportInstant: number | null = null;
 const shadowWorker = new Worker(new URL('./shadow-worker.ts', import.meta.url), { type: 'module' });
 
+function selectedDate(): Date {
+  const standard = dateAtMinutes(dateInput.value, Number(timeInput.value));
+  if (reportInstant === null) return standard;
+  const chosen = new Date(reportInstant);
+  return chosen.getFullYear() === standard.getFullYear() && chosen.getMonth() === standard.getMonth() && chosen.getDate() === standard.getDate()
+    && chosen.getHours() * 60 + chosen.getMinutes() === Number(timeInput.value) ? chosen : standard;
+}
+
+const dayReport = createDayReportView({
+  onTime(at) {
+    reportInstant = at; const chosen = new Date(at);
+    timeInput.value = String(chosen.getHours() * 60 + chosen.getMinutes()); scheduleSolarRender(true);
+  },
+  onExpanded(expanded) { placePanelElement.classList.toggle('has-day-report', expanded); updateViewportLayout(); },
+  onPicking(coordinates) {
+    reportDraftCoordinates = coordinates; terraceMap.setPointPicking(coordinates);
+    terraceMap.setSelectedPlace(coordinates ? null : placeSelection.get()?.analysisPoint.coordinates ?? null);
+  },
+  onApplyPoint(coordinates) { placeSelection.setAnalysisPoint(coordinates); centerSelectedPlace(); },
+  onFocusMap() {
+    if (reportDraftCoordinates) terraceMap.map.flyTo({ center: reportDraftCoordinates, zoom: Math.max(15.5, terraceMap.map.getZoom()), offset: mapTargetOffset(), essential: true });
+    terraceMap.map.getCanvas().focus({ preventScroll: true });
+  },
+});
+
 const placePanel = createPlacePanel(placePanelElement, {
+  reportElement: dayReport.element,
+  onEditStart: () => dayReport.hide(),
   store: savedPlaces,
   getMapCenter() { const center = terraceMap.map.getCenter(); return [center.lng, center.lat]; },
   onPointEditing(coordinates) {
@@ -261,7 +292,7 @@ const placePanel = createPlacePanel(placePanelElement, {
   onFocusMap() { centerDraftPoint(); terraceMap.map.getCanvas().focus({ preventScroll: true }); },
   trigger: discoverButton,
   onSelect: (place, origin) => selectPlace(place, origin),
-  onClear: () => placeSelection.select(null),
+  onClear: () => { dayReport.hide(); placeSelection.select(null); },
   onOpenChange(open) { shell.classList.toggle('places-open', open); updateViewportLayout(); },
   onRetry() { if (viewBounds) void loadTerraces(viewBounds, terraceMap.map.getZoom()); },
   onZoom() { terraceMap.map.easeTo({ zoom: Math.max(14, Math.min(18, terraceMap.map.getZoom() + 1)) }); },
@@ -282,7 +313,7 @@ function centerDraftPoint(): void {
 
 function refreshDiscovery(): void {
   const center = terraceMap.map.getCenter();
-  const date = dateAtMinutes(dateInput.value, Number(timeInput.value));
+  const date = selectedDate();
   const dateLabel = Number.isFinite(date.getTime())
     ? new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }).format(date) : 'Datum kiezen';
   placePanel.setContext({ terraces, bounds: viewBounds, origin: userCoordinates ?? [center.lng, center.lat],
@@ -290,6 +321,7 @@ function refreshDiscovery(): void {
     onlySunny: requiredElement<HTMLInputElement>('#sun-only').checked,
     terracesVisible: requiredElement<HTMLInputElement>('#terraces').checked, statusPending: terraceStatusesPending, statusUnavailable: terraceStatusUnavailable,
     timeLabel: `${dateLabel} · ${formatMinutes(Number(timeInput.value))}` });
+  dayReport.setContext(placeSelection.get(), dateInput.value, date.getTime(), treesEnabled);
 }
 
 function centerSelectedPlace(zoom?: number): void {
@@ -310,13 +342,14 @@ function selectPlace(place: Place, origin: HTMLElement, zoom?: number): void {
 placeSelection.subscribe(selected => {
   terraceMap.setSelectedPlace(placePanel.isEditing() ? null : selected?.analysisPoint.coordinates ?? null);
   placePanel.setSelection(selected, selectionOrigin);
+  dayReport.setContext(selected, dateInput.value, selectedDate().getTime(), treesEnabled);
   refreshVenueDetails();
 });
 
 function refreshVenueDetails(): void {
   const place = placeSelection.get()?.place;
   if (!place?.venue) { detailsRequest?.abort(); detailsRequest = null; detailsSignature = ''; completedDetails = null; return; }
-  const minutes = Number(timeInput.value), at = dateAtMinutes(dateInput.value, minutes).getTime();
+  const minutes = Number(timeInput.value), at = selectedDate().getTime();
   const signature = venueDetailsSignature(place, at, dateInput.value, minutes);
   if (place.venue.enrichment?.signature === signature) return;
   if (signature === detailsSignature) {
@@ -362,7 +395,7 @@ function showNotice(message: string, persistent = false): void {
 function renderSolarState(classifyTerraceStatus = false): void {
   const center = terraceMap.map.getCenter();
   const minutes = Number(timeInput.value);
-  const sun = getSunState(dateAtMinutes(dateInput.value, minutes), center.lat, center.lng);
+  const sun = getSunState(selectedDate(), center.lat, center.lng);
   if (classifyTerraceStatus) {
     const request: ShadowWorkerRequest = {
       type: 'classify',
@@ -600,7 +633,7 @@ async function loadTerraces(bounds: ViewBounds, zoom: number): Promise<void> {
 
 const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
   onPlaceSelect(place) { selectPlace(place, terraceMap.map.getCanvas()); },
-  onPointPick(coordinates) { placePanel.setDraftCoordinates(coordinates); },
+  onPointPick(coordinates) { if (!dayReport.setPickedPoint(coordinates)) placePanel.setDraftCoordinates(coordinates); },
   onPersonalPlaceSelect(id) {
     const record = savedPlaces.get(id);
     if (!record) return;
@@ -832,8 +865,10 @@ function locateUser(initial = false): void {
 
 window.addEventListener('pagehide', () => locationTracker?.stop());
 window.addEventListener('pagehide', () => { detailsRequest?.abort(); venueDetails.destroy(); detailsSignature = ''; completedDetails = null; });
+window.addEventListener('pagehide', () => dayReport.destroy());
 window.addEventListener('pageshow', () => refreshVenueDetails());
 window.addEventListener('pageshow', (event) => { if (event.persisted) locationTracker?.resume(); });
+window.addEventListener('pageshow', (event) => { if (event.persisted) dayReport.resume(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') locationTracker?.pause();
   else locationTracker?.resume();
@@ -846,10 +881,15 @@ locationButton.addEventListener('click', () => locateUser());
 locateUser(true);
 
 dateInput.addEventListener('change', () => {
+  reportInstant = null;
+  dayReport.setContext(placeSelection.get(), dateInput.value, selectedDate().getTime(), treesEnabled);
   scheduleSolarRender(true);
 });
-timeInput.addEventListener('input', () => scheduleSolarRender(true));
-timeInput.addEventListener('change', () => scheduleSolarRender(true));
+timeInput.addEventListener('input', () => { reportInstant = null; scheduleSolarRender(true); });
+timeInput.addEventListener('change', () => { reportInstant = null; scheduleSolarRender(true); });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && reportDraftCoordinates && dayReport.cancelPicking()) event.preventDefault();
+}, { capture: true });
 
 for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
   requiredElement<HTMLInputElement>(`#${layer}`).addEventListener('change', (event) => {
@@ -860,6 +900,7 @@ for (const layer of ['buildings', 'shadows', 'terraces'] as const) {
 
 requiredElement<HTMLInputElement>('#trees').addEventListener('change', (event) => {
   treesEnabled = (event.currentTarget as HTMLInputElement).checked;
+  dayReport.setContext(placeSelection.get(), dateInput.value, selectedDate().getTime(), treesEnabled);
   terraceMap.setVisibility('trees', treesEnabled);
   updateObstacles(false, true);
   const bounds = terraceMap.map.getBounds();
