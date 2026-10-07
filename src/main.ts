@@ -24,6 +24,7 @@ import { personalMapPoints } from './personal-places';
 import { createPlacePanel } from './place-panel';
 import type { DiscoveryContext } from './discovery';
 import type { Place, PlaceCoordinates } from './places';
+import { createVenueDetailsLoader, venueDetailsSignature, type VenueEnrichment } from './venue-details';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('App-element ontbreekt');
@@ -210,6 +211,8 @@ function mapTargetOffset(): [number, number] {
 let terraces: TerraceFeature[] = [];
 const savedPlaces = createSavedPlacesStore();
 const placeSelection = createPlaceSelection(id => savedPlaces.get(id));
+const venueDetails = createVenueDetailsLoader();
+let detailsRequest: AbortController | null = null, detailsSignature = '', completedDetails: VenueEnrichment | null = null;
 let trees: TreeFeature[] = [];
 let buildings: BuildingFeature[] = [];
 let treesEnabled = true;
@@ -307,7 +310,29 @@ function selectPlace(place: Place, origin: HTMLElement, zoom?: number): void {
 placeSelection.subscribe(selected => {
   terraceMap.setSelectedPlace(placePanel.isEditing() ? null : selected?.analysisPoint.coordinates ?? null);
   placePanel.setSelection(selected, selectionOrigin);
+  refreshVenueDetails();
 });
+
+function refreshVenueDetails(): void {
+  const place = placeSelection.get()?.place;
+  if (!place?.venue) { detailsRequest?.abort(); detailsRequest = null; detailsSignature = ''; completedDetails = null; return; }
+  const minutes = Number(timeInput.value), at = dateAtMinutes(dateInput.value, minutes).getTime();
+  const signature = venueDetailsSignature(place, at, dateInput.value, minutes);
+  if (place.venue.enrichment?.signature === signature) return;
+  if (signature === detailsSignature) {
+    if (completedDetails) placeSelection.refresh({ ...place, venue: { ...place.venue, enrichment: completedDetails } });
+    return;
+  }
+  detailsRequest?.abort();
+  const request = new AbortController(); detailsRequest = request; detailsSignature = signature; completedDetails = null;
+  void venueDetails.load(place, at, request.signal, dateInput.value, minutes).then(result => {
+    if (request.signal.aborted || detailsSignature !== signature) return;
+    const current = placeSelection.get()?.place;
+    if (!current?.venue || current.id !== place.id) return;
+    completedDetails = { ...result, signature };
+    placeSelection.refresh({ ...current, venue: { ...current.venue, enrichment: completedDetails } });
+  }).catch(error => { if (!request.signal.aborted) console.error('Locatieverrijking mislukt', error); });
+}
 
 const loadingTimeout = window.setTimeout(() => finishLoading(true), 15_000);
 
@@ -363,6 +388,7 @@ function renderSolarState(classifyTerraceStatus = false): void {
     : 'De zon is onder de horizon';
   dayState.textContent = sun.isDaylight ? 'ZON BOVEN DE STAD' : 'NA ZONSONDERGANG';
   dayState.classList.toggle('night', !sun.isDaylight);
+  refreshVenueDetails();
   sunrise.textContent = formatClock(sun.sunrise);
   sunset.textContent = formatClock(sun.sunset);
   timeInput.setAttribute('aria-valuetext', formatMinutes(minutes));
@@ -805,6 +831,8 @@ function locateUser(initial = false): void {
 }
 
 window.addEventListener('pagehide', () => locationTracker?.stop());
+window.addEventListener('pagehide', () => { detailsRequest?.abort(); venueDetails.destroy(); detailsSignature = ''; completedDetails = null; });
+window.addEventListener('pageshow', () => refreshVenueDetails());
 window.addEventListener('pageshow', (event) => { if (event.persisted) locationTracker?.resume(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') locationTracker?.pause();

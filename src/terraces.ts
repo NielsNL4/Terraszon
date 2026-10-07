@@ -1,10 +1,11 @@
 import type { TerraceEvidence, TerraceFeature, TerraceStatusResult } from './types';
 import { OVERPASS_ENDPOINTS, OVERPASS_LOAD_TIMEOUT, requestOverpassJSON } from './overpass';
 import { aborted, requestDeadline } from './requests';
+import { extractVenueFields } from './venue-data';
 
 export { OVERPASS_ENDPOINTS } from './overpass';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 
 type Bounds = { south: number; west: number; north: number; east: number };
 
@@ -31,7 +32,8 @@ function normalizedBounds(bounds: Bounds): string[] {
 
 function value(tags: Record<string, string> | undefined, ...keys: string[]): string | undefined {
   for (const key of keys) {
-    const result = tags?.[key]?.trim();
+    const raw = tags?.[key];
+    const result = typeof raw === 'string' ? raw.trim() : undefined;
     if (result) return result;
   }
   return undefined;
@@ -58,40 +60,34 @@ function isVenue(element: OverpassElement): boolean {
   return Boolean(element.tags?.amenity || element.tags?.leisure === 'outdoor_seating');
 }
 
-export function parseOverpass(data: OverpassResponse): TerraceFeature[] {
+export function parseOverpass(data: OverpassResponse, retrievedAt?: number): TerraceFeature[] {
   const seen = new Set<string>();
   return data.elements.flatMap((element) => {
     if (!isVenue(element)) return [];
     const latitude = element.lat ?? element.center?.lat;
     const longitude = element.lon ?? element.center?.lon;
-    if (latitude === undefined || longitude === undefined) return [];
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude!) > 90 || Math.abs(longitude!) > 180) return [];
     const id = `${element.type}/${element.id}`;
     if (seen.has(id)) return [];
     seen.add(id);
     const tags = element.tags;
+    const { fields, fieldTags } = extractVenueFields(tags);
 
     return [{
       type: 'Feature' as const,
       properties: {
+        ...fields,
         id,
         name: value(tags, 'name', 'brand') ?? 'Naamloze horecalocatie',
         amenity: tags?.amenity ?? 'outdoor seating',
         status: 'night' as const,
         evidence: evidenceFor(tags),
-        cuisine: value(tags, 'cuisine'),
-        openingHours: value(tags, 'opening_hours'),
-        website: value(tags, 'website', 'contact:website'),
-        phone: value(tags, 'phone', 'contact:phone'),
         address: address(tags),
-        wheelchair: value(tags, 'wheelchair'),
-        capacity: value(tags, 'capacity:outdoor', 'capacity'),
-        covered: value(tags, 'covered'),
-        outdoorSeating: value(tags, 'outdoor_seating'),
-        seasonal: value(tags, 'seasonal'),
+        provenance: { provider: 'osm', recordId: id, sourceUrl: `https://www.openstreetmap.org/${id}`, retrievedAt, fieldTags },
         osmType: element.type,
         osmId: element.id,
       },
-      geometry: { type: 'Point' as const, coordinates: [longitude, latitude] },
+      geometry: { type: 'Point' as const, coordinates: [longitude!, latitude!] },
     }];
   });
 }
@@ -123,7 +119,7 @@ export async function fetchTerraces(bounds: Bounds, signal?: AbortSignal): Promi
           body: new URLSearchParams({ data: query }),
         });
         if (payload.remark || !Array.isArray(payload.elements)) throw new Error('Onvolledig Overpass-resultaat');
-        features = parseOverpass(payload);
+        features = parseOverpass(payload, Date.now());
         break;
       } catch (error) {
         if (deadline.signal.aborted) throw aborted(deadline.signal);

@@ -1,5 +1,6 @@
 import type { Feature, MultiPolygon, Point, Polygon, Position } from 'geojson';
 import type { LeafCycle, TreeProfileId } from './tree-profiles';
+import type { VenueFields, VenueProvenance } from './venue-data';
 
 export type SunState = {
   altitude: number;
@@ -40,23 +41,15 @@ export type ShadowMesh = {
 export type TerraceStatus = 'sun' | 'shade' | 'filtered' | 'night';
 export type TerraceEvidence = 'confirmed' | 'possible' | 'mapped';
 
-export type TerraceProperties = {
+export type TerraceProperties = VenueFields & {
   id: string;
   name: string;
   amenity: string;
   status: TerraceStatus;
   shadeSource?: 'building' | 'tree';
   evidence: TerraceEvidence;
-  cuisine?: string;
-  openingHours?: string;
-  website?: string;
-  phone?: string;
   address?: string;
-  wheelchair?: string;
-  capacity?: string;
-  covered?: string;
-  outdoorSeating?: string;
-  seasonal?: string;
+  provenance?: VenueProvenance;
   osmType: 'node' | 'way' | 'relation';
   osmId: number;
 };

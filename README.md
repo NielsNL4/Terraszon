@@ -116,6 +116,20 @@ Opslagfouten worden teruggegeven; er is geen onzichtbaar tijdelijk "opgeslagen" 
 
 Het ontdekmenu en Mijn plekken gebruiken deze onderlaag; zie [de roadmap](./ROADMAP.md).
 
+## Restaurantverrijking, openingstijden en media
+
+T4 levert de data-onderlaag voor de rijkere presentatie in F3. OSM-menulinks, voorzieningen, dieet-/afhaal-/reserveringsvelden, zaak-/keuken-/terrasuren en Wikimedia-verwijzingen worden afzonderlijk verwerkt. `provenance` bewaart de gebruikte bronrecord, bronlink, oorspronkelijke tag per veld en, na een download, het ophaalmoment. Een door OSM opgegeven `check_date:opening_hours` blijft onderscheiden van dat ophaalmoment; ophalen betekent niet dat de zaakgegevens daadwerkelijk zijn gecontroleerd.
+
+De volledige OSM-parser **opening_hours.js 3.15.0** draait in een aparte browserworker. De kaartstart downloadt die worker niet; een geselecteerde locatie met openingstijden vraagt hem op. Datum-/tijdwijzigingen hergebruiken de worker. Het resultaat bevat open/gesloten/onbekend, een begrensde volgende wissel en zeven dagoverzichten. Zaak, keuken en terras worden niet gelijkgesteld. Ontbrekende of conditionele regels, parserwaarschuwingen, ongeldige kloktijden en ontbrekende feestdagcontext blijven onbekend. Land/regio komen uit brongegevens; alleen een kleine, zekere regio binnen Groningen krijgt een gedocumenteerde Nederlandse fallback. Een bekende afwijking tussen locatie- en browsertijdzone geeft onbekend in plaats van een verkeerd omgerekende status. Een wereldwijde tijdzone-/landlookup is hiermee niet geïmplementeerd.
+
+De worker en relatieve asset-URL's werken op statische hosting, inclusief een pad zoals `/Terraszon/` op GitHub Pages. De productiebuild publiceert onder `licenses/opening_hours/` het upstream LGPL-/GPL-licentiebestand, CC0-/ODbL-teksten, bronverwijzingen en het oorspronkelijke ongewijzigde ESM-modulebestand. Deze bron-/licentie-assets en de parserworker worden niet bij de kaartstart gedownload. opening_hours.js-bron: [GitHub](https://github.com/opening-hours/opening_hours.js/tree/v3.15.0).
+
+Media worden alleen via concrete Commons-bestanden of een gekoppeld Wikidata-P18-bestand opgezocht; een categorie levert geen willekeurig gekozen foto. Een losse OSM-`image`-URL geeft geen hergebruikrecht. De metadata bevatten maker, licentie/link, Commons-bronpagina, attributietekst, dimensies, onderwerp en eventuele beoordelingsdatum. De resolver accepteert herkenbare CC BY, CC BY-SA, CC0 en public-domain-licenties; ontbrekende attributie of onduidelijke rechten leveren geen bruikbare afbeelding. Metadata-HTML wordt tekst en is niet bestemd voor `innerHTML`.
+
+De kleine, gecontroleerde Groningen-selectie koppelt OSM-node 918944223 (Huis De Beurs) aan een pandfoto uit 2016 van Gouwenaar/CC0, en nodes 2752222651 en 1129293293 (De Drie Gezusters) aan een pandenfoto uit 2012 van Baykedevries/CC BY-SA 3.0 nl. De onderschriften benoemen het historische buitenaanzicht; dit zijn geen actuele terrasmetingen. Metadata worden maximaal 24 uur in een begrensde geheugencache bewaard; negatieve metadata kort, netwerkfouten niet als succesvolle foto. Tijdwijzigingen hergebruiken de lopende foto-opvraag. Pixels worden via een aparte, expliciete image-loader geladen; fouten of timeouts veranderen locatie- en openingsgegevens niet. Deze verrijking wordt niet automatisch in persoonlijke opslag of exports overgenomen.
+
+Referenties: [opening_hours API](https://github.com/opening-hours/opening_hours.js#library-api), [Commons Imageinfo](https://www.mediawiki.org/wiki/API:Imageinfo), [Commons hergebruik](https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia). Beelddekking is beperkt tot beschikbare, gekoppelde of gecontroleerde bestanden; de volledige fotoshow en leesbare openingstijdenbediening volgen in F3.
+
 ## Nauwkeurigheid en beperkingen
 
 - De geselecteerde tijd gebruikt de tijdzone van de browser. Bij een kaartlocatie in een andere tijdzone moet de gebruiker dit verschil zelf meenemen.

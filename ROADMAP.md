@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, F1 en F2 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, F1 en F2 zijn uitgevoerd en gecontroleerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -33,7 +33,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, F1 en F2 zijn uitgevoerd en
 | T1 | Volledigheid van gebouw- en boomdata | — | Afgerond — 7 oktober 2026 |
 | T2 | Requesthergebruik en netwerkplanning | T1 | Afgerond — 7 oktober 2026 |
 | T3 | Locatiemodel en persoonlijke opslag | — | Afgerond — 7 oktober 2026 |
-| T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Open |
+| T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Afgerond — 7 oktober 2026 |
 | T5 | Zonrapport-engine per analysepunt | T1, T3 | Open |
 | T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Open |
 | T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Open, later |
@@ -151,6 +151,18 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Voor een openingstijdenparser of extra dependency eerst de concrete keuze vastleggen.
 
 **Commit:** `Enrich place details with hours and licensed media`
+
+**Uitvoering en bewijs — 7 oktober 2026**
+- Meer OSM-velden toegevoegd met per-veld tagherkomst, bronrecord/link en ophaalmoment. Menulinks, voorzieningen, afzonderlijke zaak/keuken/terrasuren en mediareferenties blijven brondata, buiten persoonlijke exports.
+- Parserkeuze voor implementatie vastgelegd: opening_hours.js 3.15.0. De gebruiker vroeg of de volledige parser op GitHub Pages kan; dat is bevestigd en als productiebuild met geneste `/Terraszon/`-URL getest. De on-demand worker houdt parserwerk buiten de hoofdthread en wordt bij de gesloten kaartstart niet gedownload.
+- Begrensde status-/wissel-/zevendagenresultaten toegevoegd. Ontbrekende context, onbekende/conditionele regels, warnings, tijdzonemismatch en genormaliseerde niet-bestaande kloktijden blijven onbekend. Zaak, terras en keuken blijven apart.
+- Commons/Wikidata-metadataresolver plus expliciete pixel-loader toegevoegd. Maker/licentie/bron/attributie worden behouden; geen willekeurige categoriefoto, losse externe image-link als rechtenbewijs of scraping. Metadata- en pixelproblemen blokkeren de locatie niet.
+- Live selectie gecontroleerd via OSM REST en Commons: Huis De Beurs node 918944223/Gouwenaar/CC0 (pandfoto 2016), De Drie Gezusters nodes 2752222651 en 1129293293/Baykedevries/CC BY-SA 3.0 nl (pandenfoto 2012). Onderschriften benoemen pand en jaar. Twee live resolveropvragen gaven geldige maker/licentie/bron terug.
+- Het echte Huis De Beurs-rooster wordt zonder waarschuwing gelezen. Eén Drie Gezusters-rooster krijgt een waarschuwing voor overlappende nachtregels en het andere heeft open eindtijden: beide leveren bewust onbekend op, zonder de bron te repareren.
+- Productie-browsercheck geslaagd onder `/Terraszon/`: nul parserrequests bij kaartstart, één native worker bij selectie, hergebruik bij tijdwijziging, open/gesloten en DST-invalid-time, één foto-metadataopvraag over meerdere tijdkeuzes, licenties inclusief GPL-tekst bereikbaar, geen ongehanteerde browserfouten.
+- Eindcontroles geslaagd: `npm run lint` (Oxlint), `npm test` (179 tests in 24 bestanden), `npm run build` en `git diff --check`.
+- Bewijsgrenzen: productieflow gebruikt synthetische restaurant-/mediametadata; de parser en productie-assets zijn echt. Live broncontrole verifieert koppeling en gepubliceerde metadata, niet actuele openingspraktijk of een exacte terraspositie. Een eerste publieke Overpass-opvraag werd geweigerd/gelimiteerd; daarna is niet door quota heen geroteerd en de kleine OSM REST-batch is gebruikt. De parserworker is circa 716 kB ongecomprimeerd en apart geladen; de bestaande hoofd-bundlewaarschuwing blijft.
+- Volgende fase: F3, foto's en openingstijden mooi verwerken in het detailpaneel en filters.
 
 ### T5 — Zonrapport-engine per analysepunt
 

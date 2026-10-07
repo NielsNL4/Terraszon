@@ -1,5 +1,6 @@
 import type { SearchResult } from './search';
-import type { TerraceFeature, TerraceEvidence } from './types';
+import type { TerraceFeature } from './types';
+import type { VenueInfo } from './venue-data';
 
 export type PlaceCoordinates = [number, number];
 export type PlaceKind = 'venue' | 'address' | 'custom';
@@ -12,16 +13,7 @@ export type Place = {
   coordinates: PlaceCoordinates;
   address?: string;
   sources: PlaceSource[];
-  venue?: {
-    amenity: string;
-    evidence: TerraceEvidence;
-    cuisine?: string;
-    openingHours?: string;
-    website?: string;
-    phone?: string;
-    wheelchair?: string;
-    covered?: string;
-  };
+  venue?: VenueInfo;
 };
 export type PersonalPlaceData = {
   favorite: boolean;
@@ -138,8 +130,12 @@ export function terracePlace(feature: TerraceFeature): Place {
   const sourceId = `${p.osmType}/${p.osmId}`;
   return { id: `osm:${sourceId}`, kind: 'venue', name: p.name, coordinates: placeCoordinates(feature.geometry.coordinates), address: p.address,
     sources: [{ provider: 'osm', id: sourceId, storage: 'open', url: `https://www.openstreetmap.org/${sourceId}` }],
-    venue: { amenity: p.amenity, evidence: p.evidence, cuisine: p.cuisine, openingHours: p.openingHours,
-      website: p.website, phone: p.phone, wheelchair: p.wheelchair, covered: p.covered } };
+    venue: { amenity: p.amenity, evidence: p.evidence, cuisine: p.cuisine, openingHours: p.openingHours, kitchenHours: p.kitchenHours,
+      terraceHours: p.terraceHours, hoursCheckedAt: p.hoursCheckedAt, menuUrl: p.menuUrl, website: p.website, phone: p.phone,
+      wheelchair: p.wheelchair, covered: p.covered, capacity: p.capacity, outdoorSeating: p.outdoorSeating, seasonal: p.seasonal,
+      toilets: p.toilets, vegetarian: p.vegetarian, vegan: p.vegan, takeaway: p.takeaway, reservation: p.reservation,
+      countryCode: p.countryCode, region: p.region, timeZone: p.timeZone,
+      wikidata: p.wikidata, wikimediaCommons: p.wikimediaCommons, imageReference: p.imageReference, provenance: p.provenance } };
 }
 
 export function addressPlace(result: SearchResult): Place {
