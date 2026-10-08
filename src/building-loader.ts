@@ -68,11 +68,12 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
   const cachedArea = async (area: Bounds): Promise<CachedArea | null> => {
     const key = keyFor(area);
     let cached = memory.get(key);
+    if (cached && (!Number.isFinite(cached.savedAt) || cached.savedAt > Date.now() || Date.now() - cached.savedAt >= (cached.status === 'empty' ? 60_000 : CACHE_TTL))) { memory.delete(key); cached = undefined; }
     if (!cached) {
       cached = await store.get(key) ?? undefined;
     }
     if (!cached || cached.source !== 'osm' || !['complete', 'empty'].includes(cached.status)
-      || !Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt >= (cached.status === 'empty' ? 60_000 : CACHE_TTL) || !Array.isArray(cached.buildings)
+      || !Number.isFinite(cached.savedAt) || cached.savedAt > Date.now() || Date.now() - cached.savedAt >= (cached.status === 'empty' ? 60_000 : CACHE_TTL) || !Array.isArray(cached.buildings)
       || cached.buildings.length > MAX_VIEW_BUILDINGS) return null;
     remember(key, cached);
     return cached;

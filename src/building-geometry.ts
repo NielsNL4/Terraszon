@@ -26,7 +26,7 @@ export function createBuildingGeometry() {
     hashes.set(geometry, result);
     return result;
   };
-  const signature = (feature: CategorizedBuilding) => `${feature.properties.id}:${hash(feature.geometry)}:${feature.properties.height}:${feature.properties.minHeight}:${feature.properties.buildingType}`;
+  const signature = (feature: CategorizedBuilding) => `${feature.properties.id}:${hash(feature.geometry)}:${feature.properties.height}:${feature.properties.minHeight}:${feature.properties.buildingType}:${feature.properties.hasHeight}:${feature.properties.isPart}`;
   const box = (geometry: Polygon | MultiPolygon) => {
     if (!boxes.has(geometry)) boxes.set(geometry, buildingBox(geometry));
     return boxes.get(geometry)!;
@@ -35,6 +35,8 @@ export function createBuildingGeometry() {
   let fallback: CategorizedBuilding[] = [];
   let resolveHeights = createTileHeightResolver([]);
   let previous = new Map<string, string>();
+  let previousFeatures = new Map<string, CategorizedBuilding>();
+  let preparedBounds = '';
   let reset = false;
   return {
     setKnown(buildings: CategorizedBuilding[]) {
@@ -42,9 +44,12 @@ export function createBuildingGeometry() {
       const key = buildings.map(signature).sort().join('|');
       if (key === knownKey) return false;
       knownKey = key; known = buildings;
+      preparedBounds = '';
       return true;
     },
     prepare(bounds: BuildingBounds, tiles?: BuildingTile[]): { diff: GeoJSONSourceDiff; count: number; changed: boolean } {
+      const boundsKey = JSON.stringify(bounds);
+      if (!tiles && !reset && preparedBounds === boundsKey) return { diff: { add: [], remove: [] }, count: previous.size, changed: false };
       if (tiles) {
         resolveHeights = createTileHeightResolver(tiles);
         const unique = new Map<string, CategorizedBuilding>();
@@ -67,22 +72,28 @@ export function createBuildingGeometry() {
       };
       const features = mergeBuildingGeometry(resolveHeights(known.filter(intersects)), fallback.filter(intersects));
       const next = new Map<string, string>();
+      const nextFeatures = new Map<string, CategorizedBuilding>();
       const add: CategorizedBuilding[] = [], remove: string[] = [];
+      const update: NonNullable<GeoJSONSourceDiff['update']> = [];
       for (const feature of features) {
         const id = feature.properties.id, key = signature(feature);
         next.set(id, key);
+        const old = previousFeatures.get(id);
         if (previous.get(id) !== key) {
-          if (previous.has(id)) remove.push(id);
-          add.push(feature);
-        }
+          if (old && hash(old.geometry) === hash(feature.geometry)) {
+            update.push({ id, addOrUpdateProperties: Object.entries(feature.properties).filter(([key, value]) => value !== old.properties[key as keyof CategorizedBuilding['properties']]).map(([key, value]) => ({ key, value })) });
+          } else { if (previous.has(id)) remove.push(id); add.push(feature); }
+          nextFeatures.set(id, { ...feature, properties: { ...feature.properties } });
+        } else if (old) nextFeatures.set(id, old);
       }
       for (const id of previous.keys()) if (!next.has(id)) remove.push(id);
       previous = next;
-      const diff = { add, remove, ...(reset ? { removeAll: true } : {}) };
-      const changed = reset || !!(add.length || remove.length);
+      previousFeatures = nextFeatures; preparedBounds = boundsKey;
+      const diff = { add, remove, ...(update.length ? { update } : {}), ...(reset ? { removeAll: true } : {}) };
+      const changed = reset || !!(add.length || remove.length || update.length);
       reset = false;
       return { diff, count: next.size, changed };
     },
-    reset() { previous.clear(); reset = true; },
+    reset() { previous.clear(); previousFeatures.clear(); preparedBounds = ''; reset = true; },
   };
 }

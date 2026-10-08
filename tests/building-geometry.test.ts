@@ -27,9 +27,9 @@ describe('incrementele gebouwweergave', () => {
     engine.prepare(bounds);
     engine.setKnown([feature('apartments')]);
     const result = engine.prepare(bounds);
-    expect(result.diff.remove).toEqual(['way/1']);
-    expect(result.diff.add).toHaveLength(1);
-    expect(result.diff.add![0].properties!.buildingType).toBe('apartments');
+    expect(result.diff.remove).toEqual([]);
+    expect(result.diff.add).toEqual([]);
+    expect(result.diff.update).toEqual([{ id: 'way/1', addOrUpdateProperties: [{ key: 'buildingType', value: 'apartments' }] }]);
   });
   it('behoudt bekende informatie na een leeg/mislukt resultaat en bouwt na contextreset opnieuw op', () => {
     const engine = createBuildingGeometry();
@@ -39,5 +39,16 @@ describe('incrementele gebouwweergave', () => {
     expect(engine.prepare(bounds).count).toBe(1);
     engine.reset();
     expect(engine.prepare(bounds).diff.add).toHaveLength(1);
+  });
+  it('invalideert de hergebruikte voorbereiding bij bounds, geometrie en hoogteevidentie', () => {
+    const engine = createBuildingGeometry(), first = feature('house'); engine.setKnown([first]); engine.prepare(bounds);
+    expect(engine.prepare(bounds)).toMatchObject({ changed: false, count: 1 });
+    expect(engine.prepare({ ...bounds, west: 7, east: 8 })).toMatchObject({ changed: true, count: 0 });
+    engine.prepare(bounds);
+    expect(engine.setKnown([{ ...first, properties: { ...first.properties, hasHeight: false } }])).toBe(true);
+    expect(engine.prepare(bounds).changed).toBe(true);
+    const moved = structuredClone(first); if (moved.geometry.type === 'Polygon') moved.geometry.coordinates[0][0][0] += 0.0001;
+    engine.setKnown([moved]); const result = engine.prepare(bounds);
+    expect(result.diff.remove).toEqual(['way/1']); expect(result.diff.add).toHaveLength(1);
   });
 });

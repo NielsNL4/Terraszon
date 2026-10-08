@@ -2,13 +2,14 @@ import type { FeatureCollection, Point } from 'geojson';
 import type { TreeFeature } from './types';
 import { OVERPASS_ENDPOINTS, requestOverpassJSON } from './overpass';
 import { stableTreeFraction, TREE_PROFILES, treeIdentity } from './tree-profiles';
-import { aborted, requestJSON } from './requests';
+import { abortable, aborted, requestJSON } from './requests';
+import { treeFromRecord } from './tree-records';
+import { decodeTreeCache, encodeTreeCache, retireLegacyTreeCache, treeCacheStore, type TreeCacheStore } from './tree-cache';
 import type { DataBounds, DataCoverage } from './data-coverage';
 
 export const TREE_PAGE_SIZE = 1_000;
 const MAX_MUNICIPAL_PAGES = 4;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
-const EARTH_METERS_PER_DEGREE = 111_320;
 const GRONINGEN_TREES = 'https://services2.arcgis.com/chCSiGO4ORzXeSGk/arcgis/rest/services/Bomen_gemeente_Groningen/FeatureServer/0/query';
 const GRONINGEN_EXTENT = { south: 53.1, west: 6.3, north: 53.38, east: 6.85 };
 
@@ -68,20 +69,7 @@ function estimatedDiameter(height: number): number {
 function treeFeature(id: string, latitude: number, longitude: number, height: number, diameter: number,
   details: Partial<TreeFeature['properties']> = {}): TreeFeature {
   const radius = diameter / 2;
-  const ring: [number, number][] = [];
-  for (let i = 0; i < 12; i++) {
-    const angle = 2 * Math.PI * i / 12;
-    ring.push([
-      longitude + radius * Math.cos(angle) / (EARTH_METERS_PER_DEGREE * Math.cos(latitude * Math.PI / 180)),
-      latitude + radius * Math.sin(angle) / EARTH_METERS_PER_DEGREE,
-    ]);
-  }
-  ring.push(ring[0]);
-  return {
-    type: 'Feature',
-    properties: { id, height, crownRadius: radius, rotation: stableTreeFraction(id) * Math.PI * 2, ...details },
-    geometry: { type: 'Polygon', coordinates: [ring] },
-  };
+  return treeFromRecord([longitude, latitude, { id, height, crownRadius: radius, rotation: stableTreeFraction(id) * Math.PI * 2, ...details }]);
 }
 
 export function parseTrees(data: { elements: TreeElement[] }): TreeFeature[] {
@@ -194,32 +182,25 @@ async function fetchMunicipalTrees(bounds: Bounds, signal: AbortSignal,
   return result('partial', true);
 }
 
-export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumRequests = 6): Promise<TreeAreaData> {
+export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumRequests = 6, store: TreeCacheStore = treeCacheStore): Promise<TreeAreaData> {
   if (signal.aborted) throw aborted(signal);
   const values = [bounds.south, bounds.west, bounds.north, bounds.east].map((value, index) => {
     const scaled = value * 1_000_000;
     return ((index < 2 ? Math.floor(scaled) : Math.ceil(scaled)) / 1_000_000).toFixed(6);
   });
-  const key = `terraszon:v5:trees:${values.join(':')}`;
+  const key = `terraszon:v6:trees:${values.join(':')}`;
+  retireLegacyTreeCache();
   try {
-    const cached = localStorage.getItem(key);
-    if (cached) {
-      const parsed = JSON.parse(cached) as { savedAt: number; data: TreeAreaData };
-      if (parsed.data?.status === 'complete' && ['groningen', 'osm'].includes(parsed.data.source)
-        && Array.isArray(parsed.data.trees) && parsed.data.trees.length && parsed.data.trees.length <= TREE_PAGE_SIZE * MAX_MUNICIPAL_PAGES
-        && Number.isFinite(parsed.savedAt) && Date.now() - parsed.savedAt < CACHE_TTL) {
-        return { ...parsed.data, requests: 0 };
-      }
-    }
-  } catch { /* A blocked cache should not prevent loading trees. */ }
+    const cached = decodeTreeCache(await abortable(store.get(key), signal));
+    if (cached) return cached;
+  } catch { if (signal.aborted) throw aborted(signal); /* Cache failures fall back to the source. */ }
 
   let requests = 0;
-  const save = (data: TreeAreaData): TreeAreaData => {
+  const save = async (data: TreeAreaData): Promise<TreeAreaData> => {
     if (signal.aborted) throw aborted(signal);
     const result = { ...data, requests };
-    if (result.status === 'complete' && result.trees.length) {
-      try { localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: result })); } catch { /* Cache is optional. */ }
-    }
+    const cached = encodeTreeCache(result);
+    if (cached) try { await abortable(store.set(key, cached, { expiresAt: cached.savedAt + (result.status === 'empty' ? 60_000 : CACHE_TTL), records: result.trees.length }), signal); } catch { if (signal.aborted) throw aborted(signal); }
     return result;
   };
   if (intersectsGroningen(bounds) && maximumRequests > 0) {

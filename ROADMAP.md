@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1, F2, F4 en F5 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4 en F5 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -35,7 +35,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, F1, F2, F4 en F5 zi
 | T3 | Locatiemodel en persoonlijke opslag | — | Afgerond — 7 oktober 2026 |
 | T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Afgerond — 7 oktober 2026 |
 | T5 | Zonrapport-engine per analysepunt | T1, T3 | Afgerond — 7 oktober 2026 |
-| T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Open |
+| T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Afgerond — 8 oktober 2026 |
 | T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Open, later |
 | T8 | Nederlandse databronnen en hoogteverrijking | Evaluatie T7 | Open, later |
 | F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Afgerond — 7 oktober 2026 |
@@ -218,6 +218,17 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Cachemigratie, verlopen records, opslaglimieten en data-invalidation testen.
 
 **Commit:** `Optimize measured map processing and cache lifecycles`
+
+**Uitvoering en bewijs — 8 oktober 2026**
+- Voor/na-metingen uitgevoerd met dezelfde synthetische datasets en bronlatentie: dichte bebouwing (3.000 gebouwen/600 bomen) en boomrijk (600 gebouwen/4.000 bomen), desktop en CPU4×-mobielsimulatie, ieder drie onafhankelijke runs vóór en na. Netwerk/bronbytes, hoofdthread, native workerfasen, cachewarmte, geometrie en software-GL-rendering zijn apart geregistreerd. Methode, herhalingen, hardware, cijfers én tegenvallers staan in [T6-results.md](./tests/performance/T6-results.md); optionele herhaalbare browserdrivers zijn meegeleverd zonder nieuwe projectdependency.
+- Gemeten knelpunten aangepakt: grote synchrone GeoJSON-boomcache en ontbrekende worker-toegang tot localStorage, herhaalde identieke gebouwvoorbereiding, en volledige polygonen bij propertywijzigingen. Boomcentra/profielen worden compact opgeslagen met gedeelde kroonoffsets; alle 4.000 geometrieën/profielen zijn exact teruggelezen. Bron-/view-/rapportvolledigheid en objectaantallen blijven behouden.
+- IndexedDB-schema 2 toegevoegd met kleine metadata, TTL/LRU-opruiming en gedeelde limieten van 64 gebieden/60.000 recordslots. v1-public-sourcecache wordt bij upgrade ongeldig gemaakt; oude v5-boomgeometrie wordt begrensd opgeruimd zonder persoonlijke opslag/voorkeuren te wissen. Complete boomdata maximaal 24 uur, volledige leegte één minuut; afkapping/fouten/partial worden niet permanent als volledige dekking opgeslagen. Record-/decodecache: acht gebieden/12.000 records. Cachefouten, abort en corrupte records blijven herstelbaar via bronladen.
+- Grote gebouwreads blijven concurrent readonly; metadata-touch/cleanup volgt apart zodat geometrieklonen niet onnodig worden geserialiseerd. Verlopen/future-dated gebouwgeheugenrecords worden geweigerd. Identieke bounds zonder nieuwe data/tiles/reset vermijden de herhaalde indexpass; signatures nemen ook hoogteevidentie en onderdeelstatus mee. Pure propertywijzigingen gaan als MapLibre-updates, geometriewijzigingen behouden remove/add.
+- Finale medianen, boomrijk: warme hoofdthread-bronlezing desktop 20,0→<0,1 ms, mobiel 67,5→0,7 ms; workerherstart desktop 726,2→229,0 ms, mobiel 803,1→227,6 ms. Bronrequests in de meetcyclus 15→7; payload voor 100 typewijzigingen 32.026→8.225 bytes (74,3% kleiner). Compacte serialisatie voor 4.000 bomen 6.323.226→2.187.976 UTF-16-bytes (65,4% kleiner), geen exacte diskruimteclaim.
+- Geen algemene snelheidsclaim: sommige koude/CPU-paden werden trager (onder meer mobiel-dichte eerste worker 549→647 ms en property-diffconstructie), terwijl wirevolume/warmte/herstart verbeterden. Rendering is gemeten maar niet aangepast; SwiftShader-frame-intervallen leveren geen fysieke-device-FPS-claim. Een eerste asynchrone cachevariant bleek trager; de finale aanpak voegt begrensd decodehergebruik, compacte stringopslag en concurrent reads toe. Eén tussentijdse software-GL-meetrun bereikte de runner-timeout; de finale complete matrix is apart vastgelegd.
+- Native browserchecks geslaagd voor schema-invalidatie, LRU, opslaglimieten, oversized/expired weigeren, expiry-opruiming, schrijfproblemen, behouden persoonlijke data, exact record-roundtrip en echte MapLibre-propertypatch met behouden geometrie. Productie-dag-/jaarflow onder `/Terraszon/` geslaagd met de nieuwe cache-/gebouwworkers: één gedeelde rapportworker, dezelfde 16 dagen per jaar, identieke dagdelen en geen extra jobs bij datumkeuze.
+- Eindchecks geslaagd: `npm run lint` (Oxlint), `npm test` (226 tests in 29 bestanden), `npm run build` en `git diff --check`. Nieuwe regressies dekken cacheversie/corruptie/TTL, miss/fallback/abort, compactheid/gegevensbehoud, diff en data-/bounds-/resetinvalidatie; bestaande paging-/afkappingstests blijven gelden. Een bestaande kalenderafhankelijke openingstijdenfixture heeft een vaste testklok gekregen; productieparserwaarschuwingen zijn niet onderdrukt.
+- Bewijsgrenzen: gecontroleerde Vite-dev-componentmetingen en een aparte native productiecheck, geen livebronbenchmark, veldzonvalidatie, fysieke mobielmeting of nieuwe performanceclaim voor openingstijden/media. De bestaande grote-bundlewaarschuwing blijft aanwezig. Volgende fase: F6, selecteren op zonneduur en deelbare locaties; bronafhankelijke F3-/providerkeuzes blijven geparkeerd.
 
 ### T7 — Statische Groningen-datapilot
 

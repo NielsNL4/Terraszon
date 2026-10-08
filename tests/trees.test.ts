@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchTrees, parseMunicipalTrees, parseTrees, treeMarkers } from '../src/trees';
 import { TREE_INSTANCE_STRIDE, TREE_VERTEX_STRIDE, treeInstances, treeMesh } from '../src/tree-model';
 import { leafAmount, TREE_PROFILES, treeIdentity, treeSeasonDay } from '../src/tree-profiles';
 import { shadowVector } from '../src/shadows';
+import { treeCacheStore } from '../src/tree-cache';
 
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+beforeEach(() => vi.spyOn(treeCacheStore, 'get').mockResolvedValue(null));
 
 const groningenBounds = { south: 53.217, west: 6.566, north: 53.223, east: 6.572 };
 const osmBounds = { south: 52.99, west: 5.99, north: 53.01, east: 6.01 };
@@ -16,7 +18,7 @@ const osmRecords = (count: number) => Array.from({ length: count }, (_, id) => (
   type: 'node', id, lat: 53, lon: 6, tags: { natural: 'tree' },
 }));
 function treeSource(fetchMock: ReturnType<typeof vi.fn>) {
-  const setItem = vi.fn();
+  const setItem = vi.spyOn(treeCacheStore, 'set').mockResolvedValue(undefined);
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('localStorage', { getItem: () => null, setItem });
   return setItem;
@@ -44,7 +46,7 @@ describe('OSM-bomen', () => {
         { type: 'node', id: 1, lat: 53, lon: 6, tags: { natural: 'tree' } },
       ] }),
     });
-    const setItem = vi.fn();
+    const setItem = vi.spyOn(treeCacheStore, 'set').mockResolvedValue(undefined);
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('window', { setTimeout, clearTimeout });
     vi.stubGlobal('localStorage', { getItem: () => null, setItem });
@@ -159,18 +161,20 @@ describe('OSM-bomen', () => {
     expect(treeSeasonDay('2024-07-15')).toBe(summer);
   });
 
-  it('bewaart een leeg antwoord niet voor 24 uur', async () => {
+  it('onthoudt volledige leegte slechts één minuut in de asynchrone cache', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true, json: async () => ({ elements: [] }),
     }));
     vi.stubGlobal('window', { setTimeout, clearTimeout });
-    const setItem = vi.fn();
+    const setItem = vi.spyOn(treeCacheStore, 'set').mockResolvedValue(undefined);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem });
     expect(await fetchTrees(
       { south: 52.99, west: 5.99, north: 53.01, east: 6.01 },
       new AbortController().signal,
     )).toMatchObject({ trees: [], status: 'empty', source: 'osm' });
-    expect(setItem).not.toHaveBeenCalled();
+    expect(setItem).toHaveBeenCalledOnce();
+    const [, cached, policy] = setItem.mock.calls[0];
+    expect(cached.status).toBe('empty'); expect(policy!.expiresAt! - cached.savedAt).toBe(60_000);
   });
 
   it('valt terug op OSM wanneer de gemeentelijke bron niet beschikbaar is', async () => {

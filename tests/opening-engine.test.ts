@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateHours } from '../src/opening-engine';
 import type { HoursContext } from '../src/opening-protocol';
 
 const context = (date = new Date(2026, 9, 7, 12)): HoursContext => ({ at: date.getTime(), coordinates: [6.568, 53.219], countryCode: 'nl', region: 'Groningen' });
+// The upstream parser warns about past explicit dates relative to today's
+// clock. Keep these dated fixtures repeatable without suppressing warnings.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 7)); });
+afterEach(() => vi.useRealTimers());
 describe('openingstijden met de volledige OSM-parser', () => {
   it('berekent vaste weekroosters en scheidt een volgende wissel van huidige status', () => {
     const open = evaluateHours('Mo-Fr 09:00-17:00', context());
