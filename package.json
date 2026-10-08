@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "lint": "oxlint ."
+    "lint": "oxlint .",
+    "data:refresh": "node scripts/refresh-pilot.mjs"
   },
   "dependencies": {
     "earcut": "^3.2.3",

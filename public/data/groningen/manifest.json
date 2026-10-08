@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "revision": "rmuzh9pma-e4a8032b2232",
+  "capturedAt": 1791460402930,
+  "expiresAt": 1794052402930,
+  "cells": [
+    {
+      "id": "centrum-zuid",
+      "bounds": {
+        "south": 53.21,
+        "north": 53.22,
+        "west": 6.56,
+        "east": 6.58
+      },
+      "buildings": {
+        "path": "rmuzh9pma-e4a8032b2232/centrum-zuid-buildings.json",
+        "bytes": 1403893,
+        "sha256": "8d50a00b98929452a2ccb801c8750a87777fd154a53d6aa904469ec06b0c3bd6",
+        "count": 4552
+      },
+      "trees": {
+        "path": "rmuzh9pma-e4a8032b2232/centrum-zuid-trees.json",
+        "bytes": 553712,
+        "sha256": "5564ae03f2b656dc2d9f4e419615eb1a09c609fbddece8dd516d7b5f6dfc9506",
+        "count": 1988
+      }
+    },
+    {
+      "id": "centrum-noord",
+      "bounds": {
+        "south": 53.22,
+        "north": 53.23,
+        "west": 6.56,
+        "east": 6.58
+      },
+      "buildings": {
+        "path": "rmuzh9pma-e4a8032b2232/centrum-noord-buildings.json",
+        "bytes": 1476002,
+        "sha256": "ca213f9365e667e027b76ef2e38def3d31f6c0c230bd9a2a3e584bd36a9701a3",
+        "count": 5582
+      },
+      "trees": {
+        "path": "rmuzh9pma-e4a8032b2232/centrum-noord-trees.json",
+        "bytes": 603709,
+        "sha256": "9b098643ca85d3a619564564d80fc44cc198d0972e6239a6ceafbf837c42dfd3",
+        "count": 2164
+      }
+    }
+  ],
+  "sources": {
+    "buildings": {
+      "name": "OpenStreetMap",
+      "url": "https://www.openstreetmap.org/copyright",
+      "license": "ODbL-1.0",
+      "licenseUrl": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "attribution": "© OpenStreetMap contributors; genormaliseerde OSM-gebouwdata onder ODbL 1.0"
+    },
+    "trees": {
+      "name": "Gemeente Groningen",
+      "url": "https://data.overheid.nl/dataset/groningen-bomen-gemeente-groningen",
+      "license": "CC-BY-4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "Gemeente Groningen, CC BY 4.0; WFS-boomdata genormaliseerd, hoogte/kroonvorm/bladstand geschat"
+    }
+  }
+}

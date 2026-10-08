@@ -129,6 +129,7 @@ export function createDayReportView(options: {
       const explanation = details('Data en modelbeperkingen', 'data');
       const notes = node('ul', 'day-report-notes'); for (const note of reportLimitations(report)) notes.append(node('li', '', note));
       explanation.append(notes, node('p', 'day-report-note', `Gebouwen: OpenStreetMap (${report.coverage.buildings === 'complete' || report.coverage.buildings === 'empty' ? 'geladen gebied volledig' : 'onvolledig'}). Bomen: ${report.coverage.treeSources.map(source => source === 'groningen' ? 'gemeente Groningen' : 'OpenStreetMap').join(', ') || (report.settings.includeTrees ? 'bron niet beschikbaar' : 'uitgeschakeld')}. Daglichtduur gebruikt de zonmiddelpuntstand boven de horizon; opkomst en ondergang volgen de standaardhorizon van SunCalc.`));
+      for (const dataset of report.coverage.datasets ?? []) explanation.append(node('p', 'day-report-note', `Groningen-pilot ${dataset.revision}: brondata opgehaald ${new Intl.DateTimeFormat('nl-NL', { dateStyle: 'medium' }).format(new Date(dataset.capturedAt))}; geldig tot ${new Intl.DateTimeFormat('nl-NL', { dateStyle: 'medium' }).format(new Date(dataset.expiresAt))}. Niet het ophaalmoment van dit rapport.`));
       explanation.append(button('Opnieuw berekenen', controller.retry, 'recalculate')); content.append(explanation);
       updateTime();
     }

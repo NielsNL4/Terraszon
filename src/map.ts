@@ -355,7 +355,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
     map.setPaintProperty(BUILDING_LAYER, 'fill-extrusion-opacity', 0.92);
 
     installShadowLayer();
-    map.addSource(COLORED_BUILDING_SOURCE, { type: 'geojson', promoteId: 'id', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource(COLORED_BUILDING_SOURCE, { type: 'geojson', promoteId: 'id', attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors (ODbL)</a>', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({
       id: COLORED_BUILDING_LAYER,
       type: 'fill-extrusion', source: COLORED_BUILDING_SOURCE, minzoom: 14,

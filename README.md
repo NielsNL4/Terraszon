@@ -94,6 +94,25 @@ Gebouwvoorbereiding hergebruikt hetzelfde resultaat bij identieke bounds zonder 
 
 De [T6-meetnotitie](./tests/performance/T6-results.md) bevat methode, hardware-/netwerkcondities, drie herhalingen per toestand, voor/na-resultaten en tegenvallers. In het gecontroleerde boomrijke scenario daalde de mediane workerherstart van 726 naar 229 ms op desktop en van 803 naar 228 ms in CPU4×-mobielsimulatie. Het bericht voor 100 gebouwtypewijzigingen werd 74% kleiner. Niet alle koude of CPU-paden werden sneller; er is geen algemene FPS- of fysieke-telefoonclaim.
 
+## Statische Groningen-datapilot
+
+T7 levert twee versieerbare cellen rond Groningen centrum (53,21–53,23° N, 6,56–6,58° E), circa 3 km². De pilot bevat **10.079 unieke OSM-gebouwen en 4.152 gemeentelijke bomen** binnen de exacte grenzen. Gebouwen en bomen blijven aparte bron-/licentiebestanden. Het [manifest](./public/data/groningen/manifest.json) beschrijft revision, bron/licentie, ophaal-/vervaldatum, celgrenzen, counts, bestandsgrootte en SHA-256; distributievoorwaarden staan in [README.txt](./public/data/groningen/README.txt).
+
+Binnen complete pilotdekking leest de app statische bestanden; ontbrekende bomenstrips en gebieden buiten de dekking blijven live laden. Ontbrekende, te grote, corrupte of verlopen assets tellen niet als volledige dekking. Gebouw-/rapportworkers gebruiken hetzelfde pad onder GitHub Pages. Datasetrevision en verval worden in bron-/rapportgebruik meegenomen; de rapportdisclosure onderscheidt snapshotdatum van rapportophaal-/cachetijd. Het bestaande RAM-/objectbudget blijft gelden.
+
+Actualisering is voorlopig **handmatig**:
+
+```sh
+npm run data:refresh
+npm test
+npm run lint
+npm run build
+```
+
+De exporter gebruikt één begrensde OSM-query en stabiele gemeentelijke WFS-paging. Hij publiceert pas na volledigheids-/budget-/formaatcontroles en vervangt het manifest atomisch. Bij een fout blijft de vorige publicatie behouden. De snapshot is maximaal 30 dagen bruikbaar; ververs bij voorkeur maandelijks. Build en deployment doen geen automatische brondownloads. `PILOT_CAPTURE_FILE=/pad/naar/capture.json` kan bronresponses tijdelijk vastleggen voor gecontroleerde herhaling; die capture is geen browserasset.
+
+De [T7-meetnotitie](./tests/performance/T7-results.md) vergelijkt dezelfde vastgelegde brondata met de publicatie: drie herhalingen, 120 ms requestvertraging, echte gzip en volledige inhoudshashgelijkheid. Medianen 1,62→0,90 s op desktop en 2,41→1,28 s in CPU4×-mobielsimulatie; gzipbytes circa 50% minder. Dit is geen live-provider- of fysieke-telefoonbenchmark. Het is een laad-/distributieverbetering, geen nieuwe hoogtebron, weerscontext of claim van grotere zonnauwkeurigheid.
+
 ## Locaties ontdekken
 
 Het menu begint gesloten op desktop en mobiel. **Ontdek** opent de geladen horecalocaties in het huidige kaartgebied, gesorteerd op hemelsbrede afstand tot je bevestigde locatie of, zonder locatie, het kaartcentrum. De zoekinvoer in dit menu zoekt direct in die geladen namen, adressen en horecatypes. De algemene adres-/plaatszoeker blijft afzonderlijk beschikbaar. De lijst volgt de bestaande schakelaar **Alleen zon**, inclusief mogelijk gefilterd licht, en de zichtbaarheid van de horecalaag. Eerst worden maximaal 80 rijen opgebouwd; **Toon meer** maakt de volgende rijen beschikbaar.

@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4, F5 en F6 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, T7, F1, F2, F4, F5 en F6 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -36,7 +36,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4, F5 
 | T4 | Restaurantverrijking, openingstijden en afbeeldingen | T3 | Afgerond — 7 oktober 2026 |
 | T5 | Zonrapport-engine per analysepunt | T1, T3 | Afgerond — 7 oktober 2026 |
 | T6 | Gemeten verwerking- en cacheoptimalisatie | T2, T4, T5 | Afgerond — 8 oktober 2026 |
-| T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Open, later |
+| T7 | Statische Groningen-datapilot | T1, T2; vergelijking met T6 | Afgerond — 8 oktober 2026 |
 | T8 | Nederlandse databronnen en hoogteverrijking | Evaluatie T7 | Open, later |
 | F1 | Ontdekmenu en gedeelde locatieselectie | T3 | Afgerond — 7 oktober 2026 |
 | F2 | Mijn plekken, toevoegen en import/export | T3, F1 | Afgerond — 7 oktober 2026 |
@@ -249,6 +249,17 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Datapipeline, distributielicenties en onderhoud afspreken vóór landelijke uitbreiding.
 
 **Commit:** `Serve a versioned Groningen map dataset`
+
+**Uitvoering en bewijs — 8 oktober 2026**
+- Gebruiker bevestigde twee centrumcellen op de bestaande GitHub Pages-hosting, voorlopig handmatige actualisering en live fallback. Gebouwen onder ODbL 1.0, gemeentelijke bomen onder CC BY 4.0 blijven aparte bestanden. Voor publicatie is de officiële, gelicentieerde WFS gebruikt; de bestaande ArcGIS/OSM-livefallback blijft beschikbaar. Bronlicenties gecontroleerd via OSM-copyright en de overheidsregistratie (gemeentelijke portal gaf 403).
+- Begrensde exporter `npm run data:refresh`, vaste cellen/bounds, OSM-sentinel, WFS-OBJECT-sortering/paging en bronaantalcontrole. Alleen complete/valide snapshots; 3 MiB per asset en geometriebudget. Nieuwe bestanden eerst gevalideerd, manifest atomisch vervangen; fouten behouden de oude publicatie. Build/deploy haalt geen brondata op. Capture-optie maakt replay mogelijk zonder telkens Overpass opnieuw te belasten.
+- Gepubliceerd: 10.079 unieke OSM-gebouwen en 4.152 bomen binnen de exacte WGS84-pilotgrens. WFS-bronrecords 2.041/2.255 zijn compleet ontvangen; punten uit de iets ruimere geprojecteerde query-envelope zijn vóór publicatie geclipt. Grensgebouwen blijven behouden/dedupliceren op OSM-ID. Vier celbestanden samen 4.037.316 bytes ongecomprimeerd. Revision `rmuzh9pma-e4a8032b2232`; manifest met bron/licentie, capturedAt/expiresAt, bounds, counts, bytes en SHA-256.
+- Static-first koppeling in gebouw-, bomenview- en punt-/rapportloaders. Complete gebouwcellen vermijden live queries; bomen combineren complete cellen met alleen ontbrekende live strips en verfijnen dense statische ouders. Geen gebruik van corrupte/verlopen assets als complete dekking. Datasetstamps beïnvloeden rapportrevision/expiry; snapshotdatum is apart zichtbaar. Manifest wordt maximaal iedere minuut gerevalideerd; maximaal 30 dagen geldigheid, daarna live fallback.
+- RAM-bewust: stream-/bytegrenzen, manifest 32 KB/1,5 s, assets 3 MiB/3,5 s, caller-abort, LRU van twee bestanden/6 MiB/12.000 records. Bestaande opstart-/bron-/view-/meshbudgetten blijven behouden. Geen PMTiles/FlatGeobuf, backend, nieuwe projectdependency of landelijke download.
+- Gecontroleerde voor/na-vergelijking met dezelfde echte vastgelegde bronrecords: desktop/mobielsimulatie, drie runs per toestand, 120 ms per request en echte gzip. Alle canonieke gebouwen-/bomeninhoudshashes gelijk. Medianen 1.619→899 ms desktop en 2.415→1.278 ms mobiel; requests 7→5, gzipbytes 1.517.284→753.450. Methode, spreiding en grenzen staan in [T7-results.md](./tests/performance/T7-results.md), optionele captured replaydriver meegeleverd.
+- Native productiecheck onder `/Terraszon/` met de echte gepubliceerde assets: 10.079 gebouwen in de native worker, juiste datasetrevision in dagrapport, geen Overpass-query voor de volledig gedekte pilotgebouwcellen. Ontbrekende pilot (404) valt live terug zonder onterechte revision. Buiten-/buffergebieden blijven live; de gecontroleerde volledige flow had 6 live gebouwrequests met pilot tegenover 8 zonder. Alleen horeca/lege buitenfallback zijn fixtures; workers/UI/pilotdata echt, geen ongehanteerde browserfouten.
+- Eindchecks geslaagd: `npm run lint` (Oxlint), `npm test` (244 tests in 34 bestanden), `npm run build` en `git diff --check`. Tests dekken publicatiechecksums/counts/licenties, formaat-/checksum-/pad-/budgetfouten, partial/outside, revision/expiry, timeout/abort en ontbrekende hoogteklasse. `null`-hoogteklasse wordt genormaliseerd naar undefined; schattingen blijven schattingen. Expiry-test van de immutable publicatie gebruikt het publicatiemoment zodat latere unrelated builds niet door veroudering falen.
+- Bewijsgrenzen: source-capture/replaycomponentmeting plus native productie-preview, geen live end-to-end Pages-/fysieke-telefoonbenchmark, veldzonvalidatie of OOM-garantie. Diagnostische mainheap met echte data is niet vergelijkbaar met een lege fallbackfixture; worker-/GPUgeheugen is niet volledig gemeten. T8 bron-/hoogte-/onderhoudskeuzes blijven afzonderlijk af te stemmen. Push/deployment op expliciet gebruikersverzoek volgt na deze commit.
 
 ### T8 — Nederland: databronnen en hoogteverrijking
 

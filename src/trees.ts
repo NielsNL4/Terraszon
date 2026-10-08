@@ -6,6 +6,8 @@ import { abortable, aborted, requestJSON } from './requests';
 import { treeFromRecord } from './tree-records';
 import { decodeTreeCache, encodeTreeCache, retireLegacyTreeCache, treeCacheStore, type TreeCacheStore } from './tree-cache';
 import type { DataBounds, DataCoverage } from './data-coverage';
+import { pilotData } from './pilot-data';
+import type { DatasetStamp } from './pilot-format';
 
 export const TREE_PAGE_SIZE = 1_000;
 const MAX_MUNICIPAL_PAGES = 4;
@@ -21,6 +23,8 @@ export type TreeAreaData = {
   capped: boolean;
   failed: boolean;
   requests: number;
+  datasets?: DatasetStamp[];
+  sources?: Array<'groningen' | 'osm'>;
 };
 type TreeElement = { type: string; id: number; lat?: number; lon?: number; tags?: Record<string, string> };
 type MunicipalTree = {
@@ -104,7 +108,7 @@ export function parseMunicipalTrees(data: { features: MunicipalTree[] }): TreeFe
     const scientificName = feature.properties?.LATIJNSE_NAAM ?? undefined;
     const identity = treeIdentity(species, scientificName);
     return [treeFeature(treeId, coordinates[1], coordinates[0], height, estimatedDiameter(height) * TREE_PROFILES[identity.profile].width,
-      { ...identity, species, scientificName, heightClass: feature.properties?.BOOMHOOGTE })];
+      { ...identity, species, scientificName, heightClass: feature.properties?.BOOMHOOGTE ?? undefined })];
   });
 }
 
@@ -182,7 +186,7 @@ async function fetchMunicipalTrees(bounds: Bounds, signal: AbortSignal,
   return result('partial', true);
 }
 
-export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumRequests = 6, store: TreeCacheStore = treeCacheStore): Promise<TreeAreaData> {
+export async function fetchTreesLive(bounds: Bounds, signal: AbortSignal, maximumRequests = 6, store: TreeCacheStore = treeCacheStore): Promise<TreeAreaData> {
   if (signal.aborted) throw aborted(signal);
   const values = [bounds.south, bounds.west, bounds.north, bounds.east].map((value, index) => {
     const scaled = value * 1_000_000;
@@ -236,4 +240,24 @@ export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumReq
     }
   }
   return { trees: [], source: 'osm', status: 'failed', capped: false, failed: true, requests };
+}
+
+export async function fetchTrees(bounds: Bounds, signal: AbortSignal, maximumRequests = 6, store: TreeCacheStore = treeCacheStore): Promise<TreeAreaData> {
+  const baked = await pilotData?.trees(bounds, signal);
+  if (!baked) return fetchTreesLive(bounds, signal, maximumRequests, store);
+  // Split a dense static parent before spending the live request budget on
+  // its outer strips; children can then establish complete local coverage.
+  if (baked.records.length > 4000) return { trees: baked.records.slice(0, 4000), source: 'groningen', sources: ['groningen'], requests: 0, capped: true, failed: false, status: 'partial', datasets: [baked.dataset] };
+  const records = new Map(baked.records.map(tree => [tree.properties.id, tree])), sources = new Set<'groningen' | 'osm'>(['groningen']);
+  let requests = 0, failed = false, capped = false, complete = true;
+  for (const missing of baked.missing) {
+    if (requests >= maximumRequests) { capped = true; complete = false; break; }
+    const live = await fetchTreesLive(missing, signal, maximumRequests - requests, store);
+    requests += live.requests; failed ||= live.failed; capped ||= live.capped; sources.add(live.source);
+    complete &&= live.status === 'complete' || live.status === 'empty';
+    for (const tree of live.trees) records.set(tree.properties.id, tree);
+  }
+  const trees = [...records.values()]; capped ||= trees.length > 4000;
+  return { trees: trees.slice(0, 4000), source: 'groningen', sources: [...sources], requests, capped, failed,
+    status: complete && !capped ? trees.length ? 'complete' : 'empty' : 'partial', datasets: [baked.dataset] };
 }

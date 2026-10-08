@@ -2,6 +2,7 @@ import type { DataBounds, DataCoverage } from './data-coverage';
 import type { PlaceCoordinates } from './places';
 import type { BuildingFeature, TreeFeature } from './types';
 import type { OverpassFromWorker, OverpassToWorker } from './overpass-bridge';
+import type { DatasetStamp } from './pilot-format';
 
 export const SUN_REPORT_MODEL_VERSION = 'sun-report-1';
 export const REPORT_RADIUS_METERS = 532; // 500m shadow horizon plus model crown envelope
@@ -20,6 +21,7 @@ export type ReportCoverage = {
   treesLimited: boolean;
   loadedAt: number;
   expiresAt: number;
+  datasets?: DatasetStamp[];
 };
 export type ReportObstacles = { revision: string; buildings: BuildingFeature[]; trees: TreeFeature[]; coverage: ReportCoverage };
 export type ReportWindow = { from: number; to: number; state: ReportState };

@@ -4,6 +4,8 @@ import type { TreeFeature } from './types';
 import { splitDataBounds, type DataCoverage } from './data-coverage';
 import { aborted, abortable, requestDeadline } from './requests';
 import { OVERPASS_LOAD_TIMEOUT } from './overpass';
+import { pilotData } from './pilot-data';
+import type { DatasetStamp } from './pilot-format';
 export { treeDataKey } from './tree-profiles';
 
 export type TreeBounds = { south: number; west: number; north: number; east: number };
@@ -17,6 +19,7 @@ export type TreeViewData = {
   renderLimited: boolean;
   failedAreas: number;
   sources: TreeAreaData['source'][];
+  datasets?: DatasetStamp[];
 };
 const contains = (outer: TreeBounds, inner: TreeBounds) => outer.south <= inner.south && outer.north >= inner.north
   && outer.west <= inner.west && outer.east >= inner.east;
@@ -47,12 +50,15 @@ export function missingTreeBounds(target: TreeBounds, coverage: TreeBounds[]): T
 export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumRequests?: number; maximumDepth?: number; selectionLimit?: number } = {}) {
   const selectionLimit = Math.max(1, Math.min(12_000, options.selectionLimit ?? MAX_RENDER_TREES));
   const regions: Array<{ bounds: TreeBounds; data: TreeAreaData; savedAt: number }> = [];
+  let lastRevision: string | null | undefined;
   const complete = (data: TreeAreaData) => data.status === 'complete' || data.status === 'empty';
   const loadView = async (view: TreeBounds, signal: AbortSignal, callerSignal: AbortSignal): Promise<TreeViewData> => {
     if (signal.aborted) throw aborted(signal);
+    const revision = await pilotData?.revision(bufferedTreeBounds(view), signal);
+    if (revision !== lastRevision) { regions.length = 0; lastRevision = revision; }
     for (let i = regions.length - 1; i >= 0; i--) {
       const ttl = regions[i].data.status === 'empty' ? EMPTY_TTL : TTL;
-      if (Date.now() - regions[i].savedAt > ttl) regions.splice(i, 1);
+      if (Date.now() - regions[i].savedAt > ttl || regions[i].data.datasets?.some(dataset => dataset.expiresAt <= Date.now() || dataset.revision !== revision)) regions.splice(i, 1);
     }
     const coverage = () => regions.filter(region => complete(region.data)).map(region => region.bounds);
     const covered = regions.find(region => complete(region.data) && contains(region.bounds, view));
@@ -112,8 +118,10 @@ export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumR
     while (regions.length > 32 || regions.reduce((n, region) => n + region.data.trees.length, 0) > 12_000) regions.shift();
     const unique = new Map<string, TreeFeature>();
     const sources = new Set<TreeAreaData['source']>();
+    const datasets = new Map<string, DatasetStamp>();
     for (const region of regions) if (overlaps(region.bounds, target)) {
-      sources.add(region.data.source);
+      for (const source of region.data.sources ?? [region.data.source]) sources.add(source);
+      for (const dataset of region.data.datasets ?? []) datasets.set(dataset.revision, dataset);
       for (const tree of region.data.trees) unique.set(tree.properties.id, tree);
     }
     const center = [(view.west + view.east) / 2, (view.south + view.north) / 2];
@@ -129,7 +137,7 @@ export function createTreeViewLoader(fetchArea = fetchTrees, options: { maximumR
       });
     const trees = ranked.slice(0, selectionLimit).map(({ tree }) => tree).sort((a, b) => a.properties.id.localeCompare(b.properties.id));
     const uncovered = missingTreeBounds(target, coverage()).length > 0;
-    return { trees, capped: capped && uncovered, renderLimited: ranked.length > selectionLimit, failedAreas, sources: [...sources].sort(),
+    return { trees, capped: capped && uncovered, renderLimited: ranked.length > selectionLimit, failedAreas, sources: [...sources].sort(), ...(datasets.size ? { datasets: [...datasets.values()] } : {}),
       status: uncovered ? (trees.length || sources.size ? 'partial' : 'failed') : trees.length ? 'complete' : 'empty' };
   };
   return async (view: TreeBounds, signal: AbortSignal) => {

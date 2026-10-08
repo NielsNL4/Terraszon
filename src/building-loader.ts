@@ -3,6 +3,8 @@ import { OVERPASS_ENDPOINTS, OVERPASS_LOAD_TIMEOUT, requestOverpassJSON } from '
 import type { CategorizedBuilding } from './types';
 import { abortable, aborted } from './requests';
 import { splitDataBounds, type DataCoverage } from './data-coverage';
+import { pilotData } from './pilot-data';
+import type { DatasetStamp } from './pilot-format';
 
 type Bounds = { south: number; west: number; north: number; east: number };
 export type BuildingData = {
@@ -16,12 +18,13 @@ export type BuildingData = {
   partialAreas: number;
   status: DataCoverage;
   source: 'osm';
+  datasets?: DatasetStamp[];
 };
 export const MAX_FETCHED_BUILDINGS = 12_000;
 const MAX_VIEW_BUILDINGS = 12_000;
 const MAX_AREAS = 24;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
-export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[]; status: 'complete' | 'empty'; source: 'osm' };
+export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[]; status: 'complete' | 'empty'; source: 'osm'; dataset?: DatasetStamp };
 type AreaStore = { get: (key: string) => Promise<CachedArea | null>; set: (key: string, value: CachedArea) => Promise<void> };
 type LoaderOptions = { mobile?: boolean; store?: AreaStore; deadline?: number; maximumDepth?: number; maximumRefinements?: number };
 type AreaResult = { buildings: CategorizedBuilding[]; status: DataCoverage; capped: boolean; failedAreas: number; areaStatuses: DataCoverage[] };
@@ -55,6 +58,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
   const memory = new Map<string, CachedArea>();
   const inFlight = new Map<string, SourceJob>();
   let wanted: Bounds[] = [];
+  const datasets = new Map<string, DatasetStamp>();
   const keyFor = (area: Bounds) => `terraszon:v5:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(':')}`;
   const remember = (key: string, cached: CachedArea) => {
     memory.delete(key);
@@ -66,7 +70,12 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       memory.delete(first);
     }
   };
-  const cachedArea = async (area: Bounds): Promise<CachedArea | null> => {
+  const cachedArea = async (area: Bounds, signal: AbortSignal): Promise<CachedArea | null> => {
+    const baked = await pilotData?.buildings(area, signal);
+    if (baked && !baked.missing.length) {
+      datasets.set(baked.dataset.revision, baked.dataset);
+      return { savedAt: Date.now(), buildings: baked.records, status: baked.records.length ? 'complete' : 'empty', source: 'osm', dataset: baked.dataset };
+    }
     const key = keyFor(area);
     let cached = memory.get(key);
     if (cached && (!Number.isFinite(cached.savedAt) || cached.savedAt > Date.now() || Date.now() - cached.savedAt >= (cached.status === 'empty' ? 60_000 : CACHE_TTL))) { memory.delete(key); cached = undefined; }
@@ -176,6 +185,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
   const load = async (bounds: Bounds, signal: AbortSignal, onProgress?: (data: BuildingData) => void): Promise<BuildingData> => {
     if (signal.aborted) throw new DOMException('Afgebroken', 'AbortError');
     const allAreas = buildingAreas(bounds, options.mobile), areas = allAreas.slice(0, MAX_AREAS);
+    datasets.clear();
     const buildings = new Map<string, CategorizedBuilding>();
     const contributions = new Map<string, CategorizedBuilding[]>();
     let capped = areas.length < allAreas.length, failedAreas = 0, loadedAreas = 0;
@@ -183,7 +193,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     let completeAreas = 0, emptyAreas = 0, partialAreas = 0;
     let lastError: unknown;
     const snapshot = (): BuildingData => ({ buildings: [...buildings.values()], capped: capped || viewLimited, failedAreas, loadedAreas, totalAreas: areas.length,
-      completeAreas, emptyAreas, partialAreas, source: 'osm',
+      completeAreas, emptyAreas, partialAreas, source: 'osm', ...(datasets.size ? { datasets: [...datasets.values()] } : {}),
       status: capped || viewLimited || failedAreas || partialAreas || loadedAreas < areas.length ? 'partial' : buildings.size ? 'complete' : 'empty' });
     const merge = (features: CategorizedBuilding[]) => {
       for (const building of features) {
@@ -208,7 +218,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       initial = false, retained?: SourceJob): Promise<AreaResult> => {
       if (controller.signal.aborted) throw aborted(controller.signal);
       if (!initial && batch.length === 1) {
-        const cached = await abortable(cachedArea(batch[0]), controller.signal);
+        const cached = await abortable(cachedArea(batch[0], controller.signal), controller.signal);
         if (cached) {
           report(cached.buildings);
           return { buildings: cached.buildings, status: cached.status, capped: false, failedAreas: 0, areaStatuses: [cached.status] };
@@ -253,7 +263,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       // batch before the next read; stop collecting when the view is full.
       for (let index = 0; index < areas.length; index += 2) {
         if (buildings.size >= maximumBuildings) { capped = true; break; }
-        const batch = areas.slice(index, index + 2), cached = await abortable(Promise.all(batch.map(cachedArea)), controller.signal);
+        const batch = areas.slice(index, index + 2), cached = await abortable(Promise.all(batch.map(area => cachedArea(area, controller.signal))), controller.signal);
         for (let i = 0; i < batch.length; i++) {
           const record = cached[i];
           if (record) {

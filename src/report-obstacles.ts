@@ -7,6 +7,7 @@ import { abortable, aborted } from './requests';
 import { placeCoordinates } from './places';
 import { REPORT_RADIUS_METERS, SUN_REPORT_MODEL_VERSION, type ReportObstacles, type ReportTarget } from './sun-report-protocol';
 import type { DataBounds } from './data-coverage';
+import { pilotData } from './pilot-data';
 
 export function reportObstacleBounds(coordinates: [number, number]): DataBounds {
   placeCoordinates(coordinates);
@@ -22,7 +23,7 @@ export function obstacleRevision(snapshot: Pick<ReportObstacles, 'buildings' | '
   const sorted = <T extends { properties: { id: string } }>(features: T[]) => [...features].sort((a, b) => a.properties.id.localeCompare(b.properties.id));
   const text = JSON.stringify([SUN_REPORT_MODEL_VERSION, sorted(snapshot.buildings), sorted(snapshot.trees),
     snapshot.coverage.bounds, snapshot.coverage.buildings, snapshot.coverage.trees, snapshot.coverage.treeSources,
-    snapshot.coverage.buildingsLimited, snapshot.coverage.treesLimited]);
+    snapshot.coverage.buildingsLimited, snapshot.coverage.treesLimited, snapshot.coverage.datasets]);
   let a = 2_166_136_261, b = 5381;
   for (let i = 0; i < text.length; i++) { a = Math.imul(a ^ text.charCodeAt(i), 16_777_619); b = Math.imul(b, 33) ^ text.charCodeAt(i); }
   return `${text.length}:${a >>> 0}:${b >>> 0}`;
@@ -36,6 +37,7 @@ export function createReportObstacleLoader(options: {
   const loadTrees = options.trees ?? createTreeViewLoader(undefined, { selectionLimit: 12_000 });
   const cache = new Map<string, ReportObstacles>();
   let pending: { key: string; controller: AbortController; promise: Promise<ReportObstacles> } | null = null;
+  let datasetRevision: string | null | undefined;
   const keyFor = (target: ReportTarget, includeTrees: boolean) => JSON.stringify([target.coordinates, includeTrees]);
   const retain = (target: ReportTarget | null, includeTrees = true) => {
     const key = target ? keyFor(target, includeTrees) : '';
@@ -44,6 +46,8 @@ export function createReportObstacleLoader(options: {
   const load = async (target: ReportTarget, includeTrees: boolean, signal: AbortSignal): Promise<ReportObstacles> => {
     if (signal.aborted) throw aborted(signal);
     const bounds = reportObstacleBounds(target.coordinates), key = keyFor(target, includeTrees);
+    const revision = pilotData ? await pilotData.revision(bounds, signal) : undefined;
+    if (revision !== datasetRevision) { cache.clear(); datasetRevision = revision; }
     retain(target, includeTrees);
     const cached = cache.get(key);
     if (cached && cached.coverage.expiresAt > Date.now()) return cached;
@@ -70,14 +74,15 @@ export function createReportObstacleLoader(options: {
         const buildingsLimited = !!buildings?.capped || selectedBuildings.length > 12_000;
         const treesLimited = !!trees?.renderLimited;
         const loadedAt = Date.now();
+        const datasets = [...new Map([...(buildings?.datasets ?? []), ...(trees?.datasets ?? [])].map(dataset => [dataset.revision, dataset])).values()];
         const buildingStatus = !buildings ? 'failed' : buildingsLimited ? 'partial' : buildings.status;
         const treeStatus: ReportObstacles['coverage']['trees'] = !includeTrees ? 'disabled' : !trees ? 'failed' : treesLimited ? 'partial' : trees.status;
         const complete = ['complete', 'empty'].includes(buildingStatus) && ['complete', 'empty', 'disabled'].includes(treeStatus);
         const data = { buildings: selectedBuildings.slice(0, 12_000), trees: selectedTrees,
           coverage: { bounds, buildings: buildingStatus, trees: treeStatus, treeSources: trees?.sources ?? [],
             estimatedHeights: selectedBuildings.slice(0, 12_000).filter(building => !building.properties.hasHeight).length,
-            buildingsLimited, treesLimited, loadedAt,
-            expiresAt: loadedAt + (complete ? buildingStatus === 'empty' || treeStatus === 'empty' ? 60_000 : 5 * 60_000 : 3_000) } };
+            buildingsLimited, treesLimited, loadedAt, ...(datasets.length ? { datasets } : {}),
+            expiresAt: Math.min(loadedAt + (complete ? buildingStatus === 'empty' || treeStatus === 'empty' ? 60_000 : 5 * 60_000 : 3_000), ...datasets.map(dataset => dataset.expiresAt)) } };
         const snapshot: ReportObstacles = { ...data, revision: obstacleRevision(data) };
         cache.delete(key); cache.set(key, snapshot);
         while (cache.size > 2) cache.delete(cache.keys().next().value!);

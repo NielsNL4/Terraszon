@@ -19,6 +19,11 @@ describe('compacte boomcache', () => {
     const point = [6.56, 53.21];
     for (const date of ['2026-03-21', '2026-09-21']) expect(possibleTreeShade(point, prepareTreeObstacles(restored.trees), 45, 180, date)).toBe(possibleTreeShade(point, prepareTreeObstacles(trees), 45, 180, date));
   });
+  it('normaliseert ontbrekende gemeentelijke hoogteklasse naar undefined voor de recordcodec', () => {
+    const trees = parseMunicipalTrees({ features: [{ properties: { OBJECTID: 1, BOOMHOOGTE: null as never }, geometry: { type: 'Point', coordinates: [6.56, 53.21] } }] });
+    expect(trees[0].properties.heightClass).toBeUndefined();
+    expect(decodeTreeCache(structuredClone(encodeTreeCache({ ...data, trees })!))!.trees).toEqual(trees);
+  });
   it('weigert afkapping, bronfouten, onbekende versie en corrupte dimensies', () => {
     expect(encodeTreeCache({ ...data, status: 'partial', capped: true })).toBeNull();
     expect(encodeTreeCache({ ...data, failed: true })).toBeNull();
