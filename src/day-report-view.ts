@@ -186,7 +186,7 @@ export function createDayReportView(options: {
     },
     setPickedPoint(value: PlaceCoordinates) { if (!picking) return false; picking = [...value]; if (latitude && longitude) { latitude.value = String(value[1]); longitude.value = String(value[0]); } return true; },
     cancelPicking() { if (!picking) return false; endPicking(); render(controller.get()); return true; },
-    hide() { endPicking(); yearController.close(); controller.close(); },
+    hide() { endPicking(); yearController.close(); controller.close(); client.destroy(); },
     resume() { if (controller.get().expanded) controller.retry(); },
     destroy() { endPicking(); yearController.destroy(); controller.destroy(); client.destroy(); },
   };

@@ -16,6 +16,7 @@
 .place-query-row input { width: 100%; min-width: 0; height: 42px; padding: 0; border: 0; outline: 0 !important; background: transparent; color: #20231f; font-size: 13px; }
 .place-query-row input::placeholder { color: #62665f; opacity: 1; }
 .place-panel-context { flex: none; margin: 10px 16px; color: #62665f; font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.place-shared-note { flex: none; margin: 0 16px 10px; color: #365744; font-size: 12px; line-height: 1.5; }
 .place-panel-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 14px 16px; scrollbar-width: thin; scrollbar-color: #abae9f #fffdf7; }
 .place-announcement { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .place-panel ::selection { color: #20231f; background: #f5d681; }
@@ -97,6 +98,18 @@
 .place-editor-status { margin: 0; color: #365744; font-size: 12px; line-height: 1.5; }
 .place-editor-status:empty { display: none; }
 .place-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.duration-search { padding: 10px 0 16px; border-bottom: 1px solid #e6e2d9; margin-bottom: 12px; }
+.place-panel.is-duration-list { overflow: clip; }
+.duration-search-content { margin-top: 12px; }
+.duration-search-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.duration-search-form label { flex: 1; min-width: 120px; color: #30322e; font-size: 12px; font-weight: 600; }
+.duration-search-form input, .duration-search-form select, .place-share-field input { display: block; width: 100%; min-height: 40px; margin-top: 5px; padding: 8px 10px; border: 1px solid #dedbd2; border-radius: 8px; color: #20231f; background: #fffefb; font: inherit; font-size: 13px; }
+.duration-note, .duration-feedback { margin: 0 0 12px; color: #62665f; font-size: 12px; line-height: 1.5; }
+.duration-feedback { margin-top: 12px; font-variant-numeric: tabular-nums; }
+.duration-results h3 { margin: 16px 0 8px; font-size: 13px; color: #30322e; }
+.duration-list { margin: 0 -14px; padding: 0; list-style: none; }
+.duration-list li + li { border-top: 1px solid #e6e2d9; }
+.place-share-field { display: block; color: #62665f; font-size: 12px; line-height: 1.5; }
 .place-editor-result { display: block; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-bottom: 1px solid #dedbd2; background: #f2ede0; color: #30322e; font-size: 12px; text-align: left; cursor: pointer; }
 .place-editor-result:hover { background: #e5e9dd; }
 .place-editor-suggestions:empty { display: none; }
@@ -109,6 +122,8 @@
   .discover-button span { display: none; }
   .place-panel { position: relative; top: auto; bottom: auto; left: auto; width: 100%; flex: none; height: min(330px, 42dvh, max(160px, calc(var(--visible-height, 100dvh) - 340px))); }
   .place-panel.is-saved-list { height: min(400px, max(260px, calc(var(--visible-height, 100dvh) - 420px))); }
+  .place-panel.is-duration-list { height: min(460px, max(220px, calc(var(--visible-height, 100dvh) - 360px))); overflow: clip; }
+  .duration-search-form input, .duration-search-form select, .place-share-field input { font-size: 16px; min-height: 44px; }
   .place-panel-header { padding: 6px 8px 6px 14px; }
   .place-icon-button { width: 44px; height: 44px; }
   .place-query-row input { font-size: 16px; }

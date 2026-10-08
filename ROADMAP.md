@@ -1,6 +1,6 @@
 # Terraszon — technische en featurefases
 
-Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4 en F5 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
+Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4, F5 en F6 zijn uitgevoerd en gecontroleerd. Praktijkvalidatie van de zonnauwkeurigheid volgt later en blokkeert de technische oplevering niet. F3 is op gebruikersverzoek geparkeerd; de overige fases staan nog open. Implementatie en commits volgen per bouwfase.
 
 ## Uitgangspunten
 
@@ -43,7 +43,7 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4 en F
 | F3 | Rijke locatiedetails, foto's en basisfilters | T4, F1 | Geparkeerd op gebruikersverzoek |
 | F4 | Dagzonrapport voor iedere locatie | T5, F1 | Afgerond — 7 oktober 2026 |
 | F5 | Jaaroverzicht en dagdeelgrafieken | F4 | Afgerond — 7 oktober 2026 |
-| F6 | Selecteren op zonneduur en deelbare locaties | F2, F3, F4; evaluatie T6 | Open, later |
+| F6 | Selecteren op zonneduur en deelbare locaties | F2, F4; evaluatie T6; providerdeel F3 geparkeerd | Afgerond — 8 oktober 2026 |
 
 ## Aanbevolen bouwvolgorde
 
@@ -414,6 +414,17 @@ Na die basis volgen **F6** en de geografische uitbreiding **T7 → T8**. Start g
 - Gedeelde links herstellen de juiste selectie en gaan goed om met ongeldige parameters.
 
 **Commit:** `Add sun-duration discovery and shareable locations`
+
+**Uitvoering en bewijs — 8 oktober 2026**
+- Zonneduurselectie aangesloten op geladen horeca en Mijn plekken, met aankomsttijd en minimum 15/30/60/90/120 minuten resterende aaneengesloten directe zon. Alleen-zon-kaartstatus is geen voorfilter; een persoonlijk analysepunt krijgt voorrang. Geschikte berekende plekken worden aflopend gesorteerd. Gefilterd licht telt niet mee; onbekend/onberekend wordt apart getoond en nooit als nul zon behandeld.
+- Expliciete analyse: zes kandidaten sequentieel per stap, maximaal 24 per zoekcontext en 20 seconden per punt. Eén tijdelijke groepsworker, beëindigd na de stap of bij annulering/context-/selectiewissel; geen worker per kandidaat. Datum, aankomst, kandidaten of bomeninstelling invalidereert oude uitkomsten. Een resultaat gebruikt precies dezelfde voorbereide dagdata en aankomstklok in details, zonder extra dagjob als de context overeenkomt. Pagehide annuleert werk en laat bij terugkeer een herstartbare toestand achter.
+- Versie-1-deellinks met allowlist van punt, epoch, datum/minuten, bronzone en bomeninstelling. Geen persoonlijke naam/notitie/favorietstatus, bronidentiteit of automatische browserpositie; bestaande URL-query wordt verwijderd. Klembordfallback toont een geselecteerd readonly-linkveld. Ontvangst opent tijdelijk een eigen punt, zonder autosave; bewaren is expliciet. Bronzone/epoch bewaart dubbele wintertijd en hetzelfde moment bij andere browserzones; de lokale ontvangstdatum kan daardoor verschillen. Geen geografische tijdzone-lookup of meegedeelde rapportuitkomst.
+- Ongeldige versies, parameters/duplicaten, getallen, bereik, zone en datum/tijd-inconsistenties worden geweigerd met een herstelmelding; locatiekeuze maakt die melding weer vrij. Een persistent paneelbericht onderscheidt tijdelijke en opgeslagen gedeelde punten en bron-/ontvangerklok.
+- Eindchecks geslaagd: `npm run lint` (Oxlint), `npm test` (236 tests in 32 bestanden), `npm run build` en `git diff --check`. Regres­sies dekken budget/workerlevensduur, filtering/sortering/onzekerheid, context/abort/late replies, genegeerde abort/deadline, linkroundtrip/privacy/invaliditeit en dubbele wintertijd.
+- Browserflows geslaagd met synthetische Test-locaties/rapporten en echte MapLibre/opslag/klokken: 6 aanvragen met één opgeruimde groepsworker, juiste sortering/unknown, aankomst naar kaart en voorbereid rapport zonder extra job, private naam/notitie niet in link, clipboardfallback, tijdelijke ontvangst zonder opslag, expliciet bewaren, UTC-conversie met hetzelfde epoch, annuleren en ongeldig-linkherstel. Desktop 1366×900, mobiel 390×844, smal 320×740 en landschap 844×390: geen pagina-/veld-overflow; resultaten en formulier blijven scrollbaar in het vaste paneel.
+- Native productiecheck onder `/Terraszon/` geslaagd met de echte groeps-/dagworker: één gemaakt én beëindigd, zes sequentiële dagjobs, nul extra jobs bij resultaatkeuze, aankomst 12:00 gekoppeld aan de kaart. Bronresponses zijn synthetische volledige leegte; UI, rekenworker en hostingpad zijn echt.
+- Mechanische detector: geen bevindingen. Onafhankelijke visuele review gaf `ship` zonder materiële F6-fixes; documentatiecontrole bevestigde behoud van de bestaande stijl. DESIGN.md en sidecar zijn behouden. De afzonderlijke RAM-/OOM-hotfix `cf7066e` is geen bewijs dat iedere browser-/GPU-OOM uitgesloten is.
+- Bewijsgrenzen: geen live zonnauwkeurigheidsmeting, fysieke-devicebenchmark of volledige assistieve-technologieaudit. F3-/providerdetails blijven geparkeerd; er is geen nieuwe bron/provider/dependency toegevoegd. De bestaande grote-bundlewaarschuwing blijft. Geografische uitbreiding T7→T8 volgt pas na afstemming van datapilot, actualisering en hosting/licenties.
 
 ## Beslismomenten en latere uitbreidingen
 

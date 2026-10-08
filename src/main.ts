@@ -21,6 +21,7 @@ import { bufferedTreeBounds, createTreeViewLoader, treeDataKey } from './tree-lo
 import type { BuildingFeature, TerraceFeature, TreeFeature } from './types';
 import { overpassScheduler } from './overpass';
 import { addressPlace, createPlaceSelection, resolveSavedPlace, terracePlace } from './places';
+import { clockInZone, readSharedSelection, sharedPoint, sharedSelectionLink } from './shared-selection';
 import { createSavedPlacesStore, PLACES_STORAGE_KEY } from './saved-places';
 import { personalMapPoints } from './personal-places';
 import { createPlacePanel } from './place-panel';
@@ -284,6 +285,17 @@ const dayReport = createDayReportView({
 });
 
 const placePanel = createPlacePanel(placePanelElement, {
+  getDurationClock: () => ({ date: dateInput.value, minutes: Number(timeInput.value), includeTrees: treesEnabled }),
+  getShareLink() {
+    const selected = placeSelection.get(); if (!selected) throw new Error('Kies eerst een zitpunt om te delen.');
+    return sharedSelectionLink(new URL(location.href), selected.analysisPoint.coordinates, selectedDate().getTime(), treesEnabled);
+  },
+  onDurationSelect(candidate, report, origin, at, date) {
+    dateInput.value = date; reportInstant = at; const arrival = new Date(at); timeInput.value = String(arrival.getHours() * 60 + arrival.getMinutes());
+    selectPlace(candidate.place, origin);
+    if (report) dayReport.setContext(placeSelection.get(), report.date, at, treesEnabled, report);
+    scheduleSolarRender(true);
+  },
   reportElement: dayReport.element,
   onEditStart: () => dayReport.hide(),
   store: savedPlaces,
@@ -338,6 +350,7 @@ function centerSelectedPlace(zoom?: number): void {
 }
 
 function selectPlace(place: Place, origin: HTMLElement, zoom?: number): void {
+  if (notice.dataset.shareError) { delete notice.dataset.shareError; notice.classList.remove('visible'); }
   initialLocationAllowed = false;
   selectionOrigin = origin;
   placeSelection.select(place);
@@ -390,6 +403,7 @@ function finishLoading(slowNetwork = false): void {
 }
 
 function showNotice(message: string, persistent = false): void {
+  if (notice.dataset.shareError && !persistent) return;
   window.clearTimeout(noticeTimer);
   notice.textContent = message;
   notice.classList.add('visible');
@@ -874,6 +888,7 @@ function locateUser(initial = false): void {
 window.addEventListener('pagehide', () => locationTracker?.stop());
 window.addEventListener('pagehide', () => { detailsRequest?.abort(); venueDetails.destroy(); detailsSignature = ''; completedDetails = null; });
 window.addEventListener('pagehide', () => dayReport.destroy());
+window.addEventListener('pagehide', () => placePanel.destroy());
 window.addEventListener('pageshow', () => refreshVenueDetails());
 window.addEventListener('pageshow', (event) => { if (event.persisted) locationTracker?.resume(); });
 window.addEventListener('pageshow', (event) => { if (event.persisted) dayReport.resume(); });
@@ -922,3 +937,18 @@ requiredElement<HTMLInputElement>('#sun-only').addEventListener('change', (event
   terraceMap.setOnlySunny((event.currentTarget as HTMLInputElement).checked);
   refreshDiscovery();
 });
+
+function openSharedSelection(): void {
+  try {
+    const shared = readSharedSelection(new URL(location.href)); if (!shared) return;
+    initialLocationAllowed = false;
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone, clock = clockInZone(shared.at, zone);
+    dateInput.value = clock.date; timeInput.value = String(clock.minutes); reportInstant = shared.at;
+    const treeToggle = requiredElement<HTMLInputElement>('#trees'); treeToggle.checked = shared.includeTrees; treeToggle.dispatchEvent(new Event('change'));
+    selectPlace(sharedPoint(shared), terraceMap.map.getCanvas()); placeSelection.setAnalysisPoint(shared.coordinates);
+    scheduleSolarRender(true);
+    placePanel.setSharedMessage(shared.zone === zone ? 'Gedeeld zitpunt.' : `Gedeeld tijdstip uit ${shared.zone}; de klok toont ${zone}. Hetzelfde moment is behouden.`);
+  } catch (error) { initialLocationAllowed = false; notice.dataset.shareError = 'true'; showNotice(error instanceof Error ? error.message : 'Deellink kon niet worden geopend.', true); }
+}
+window.addEventListener('hashchange', openSharedSelection);
+openSharedSelection();

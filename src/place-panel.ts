@@ -5,6 +5,9 @@ import { createPlaceEditor } from './place-editor';
 import { liveSavedPlace, personalPlaceRows, personalTypeLabel, savePlaceDraft, type SavedPlacesStore } from './personal-places';
 import { exportPlacesGeoJSON, PlacesStorageError } from './saved-places';
 import type { SearchResult } from './search';
+import { createDurationSearchView } from './duration-search-view';
+import type { DurationCandidate } from './duration-search';
+import type { DaySunReport } from './sun-report-protocol';
 
 const icon = (path: string) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
 const closeIcon = icon('m6 6 12 12M18 6 6 18');
@@ -51,6 +54,9 @@ export function createPlacePanel(root: HTMLElement, options: {
   onFocusMap: () => void;
   reportElement: HTMLElement;
   onEditStart: () => void;
+  getDurationClock: () => { date: string; minutes: number; includeTrees: boolean };
+  onDurationSelect: (candidate: DurationCandidate, report: DaySunReport | undefined, origin: HTMLElement, at: number, date: string) => void;
+  getShareLink: () => string;
 }) {
   root.innerHTML = `
     <header class="place-panel-header">
@@ -64,6 +70,7 @@ export function createPlacePanel(root: HTMLElement, options: {
       ${searchIcon}<input id="venue-query" type="search" placeholder="Naam in dit kaartgebied" autocomplete="off" />
     </div>
     <p class="place-panel-context"></p>
+    <p class="place-shared-note" role="status" hidden></p>
     <p class="place-announcement" role="status" aria-live="polite" aria-atomic="true"></p>
     <div class="place-storage-feedback" role="status" hidden></div>
     <input class="place-import-file" type="file" accept=".geojson,.json,application/geo+json,application/json" hidden />
@@ -75,6 +82,7 @@ export function createPlacePanel(root: HTMLElement, options: {
   const back = root.querySelector<HTMLButtonElement>('.place-panel-back')!;
   const closeButton = root.querySelector<HTMLButtonElement>('.place-panel-close')!;
   const description = root.querySelector<HTMLElement>('.place-panel-context')!;
+  const sharedNote = root.querySelector<HTMLElement>('.place-shared-note')!;
   const body = root.querySelector<HTMLElement>('.place-panel-body')!;
   const announcement = root.querySelector<HTMLElement>('.place-announcement')!;
   const sections = root.querySelector<HTMLElement>('.place-sections')!;
@@ -86,6 +94,9 @@ export function createPlacePanel(root: HTMLElement, options: {
   let area: 'nearby' | 'saved' = 'nearby', importGeneration = 0;
   let editor: ReturnType<typeof createPlaceEditor> | null = null;
   let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  let shareGeneration = 0;
+  let sharedMessage = '';
+  const duration = createDurationSearchView({ onSelect: options.onDurationSelect, onExpanded() { renderKey = ''; render(); } });
 
   const announce = (text: string) => {
     clearTimeout(announcementTimer);
@@ -156,6 +167,7 @@ export function createPlacePanel(root: HTMLElement, options: {
   const startEditor = (place?: Place) => {
     if (!context) return;
     options.onEditStart();
+    duration.stop();
     const target = place ?? customPlace('Nieuwe plek', options.getMapCenter());
     const saved = options.store.get(target.id);
     const coordinates = selection?.place.id === target.id ? selection.analysisPoint.coordinates : saved?.personal.analysisPoints[0]?.coordinates ?? target.coordinates;
@@ -193,6 +205,15 @@ export function createPlacePanel(root: HTMLElement, options: {
     const rows = discoveryRows(context, query.value);
     const records = options.store.list(), stored = selection ? options.store.get(selection.place.id) : undefined;
     const personalRows = personalPlaceRows(records, context, query.value);
+    if (!sharedNote.hidden) sharedNote.textContent = `${sharedMessage} ${stored ? 'Opgeslagen op dit apparaat.' : 'Tijdelijk geopend; bewaren kan via Opslaan.'}`;
+    const candidates = area === 'saved' ? personalRows.flatMap(row => row.place ? [{ place: row.place, name: row.name }] : [])
+      : discoveryRows({ ...context, onlySunny: false }, query.value).map(row => ({ place: row.place, name: options.store.get(row.place.id)?.personal.name ?? row.place.name }));
+    const targets: DurationCandidate[] = candidates.map(({ place, name }) => {
+      const point = options.store.get(place.id)?.personal.analysisPoints[0] ?? { id: `${place.id}:default`, coordinates: place.coordinates };
+      return { place, name, target: { id: `${place.id}:${point.id}`, coordinates: point.coordinates } };
+    });
+    if (!selection) duration.setContext({ ...options.getDurationClock(), candidates: targets });
+    root.classList.toggle('is-duration-list', !selection && duration.isExpanded());
     const storageState = options.store.state();
     root.classList.toggle('is-saved-list', area === 'saved' && !selection);
     const feature = selection ? selectedTerrace(selection, context) : undefined;
@@ -219,7 +240,7 @@ export function createPlacePanel(root: HTMLElement, options: {
         : term ? `Geen geladen locaties gevonden voor ${term} in dit kaartgebied.`
           : context.onlySunny ? 'Geen zonnige locaties gevonden in dit kaartgebied.' : 'Geen geladen locaties in dit kaartgebied.');
     } else clearTimeout(announcementTimer);
-    const key = JSON.stringify({ selection, status, feature: feature?.properties, state: context.state, area, records, storageState,
+    const key = JSON.stringify({ selection, status, feature: feature?.properties, state: context.state, area, records, storageState, duration: duration.isExpanded(),
       visible: context.terracesVisible, only: context.onlySunny, pending: context.statusPending, unavailable: context.statusUnavailable, query: query.value,
       rows: selection ? [] : rows.slice(0, visibleCount).map(row => [row.place.id, row.place.name, row.status, row.feature.properties.evidence, Math.round(row.distance)]), total: rows.length });
     if (key === renderKey) return;
@@ -255,6 +276,20 @@ export function createPlacePanel(root: HTMLElement, options: {
         actions.append(button('Bewerken', () => startEditor(place), 'edit'), button('Verwijderen', () => remove(stored), 'delete'));
       }
       actions.append(button('Toon op kaart', options.onShowOnMap, 'show-map'));
+      actions.append(button('Deel dit zitpunt', () => {
+        const id = ++shareGeneration;
+        let url: string;
+        try { url = options.getShareLink(); } catch (error) { failure(error); return; }
+        const fallback = () => {
+          if (id !== shareGeneration) return;
+          const label = node('label', 'place-share-field', 'Kopieer de link (alleen zitpunt, tijd en bomeninstelling)');
+          const input = node('input', ''); input.type = 'text'; input.readOnly = true; input.value = url; label.append(input);
+          feedback.hidden = false; feedback.replaceChildren(label); input.focus(); input.select();
+        };
+        void (navigator.clipboard?.writeText(url) ?? Promise.reject(new Error('Clipboard niet beschikbaar'))).then(() => {
+          if (id === shareGeneration) storageFeedback('Link gekopieerd: zitpunt, datum/tijd en bomeninstelling. Naam en notities zijn niet gedeeld.');
+        }).catch(fallback);
+      }, 'share'));
       const [longitude, latitude] = selection.analysisPoint.coordinates;
       actions.append(link('Route', `https://www.openstreetmap.org/directions?from=&to=${latitude},${longitude}`, 'route'));
       const website = place.venue?.website;
@@ -278,6 +313,8 @@ export function createPlacePanel(root: HTMLElement, options: {
       const source = place.sources.find(value => value.provider === 'osm');
       if (source?.url) body.append(link('Bekijk bron in OpenStreetMap', source.url, 'source'));
       body.append(node('p', 'place-data-note', place.kind === 'custom' ? 'Een persoonlijke plek op dit apparaat, niet een openbare of bevestigde horecalocatie.' : 'Gegevens uit OpenStreetMap kunnen ontbreken of verouderd zijn.'));
+    } else if (duration.isExpanded()) {
+      body.append(duration.element);
     } else if (area === 'saved') {
       const tools = node('div', 'place-collection-tools');
       const add = button('Toevoegen', () => startEditor(), 'add'); add.setAttribute('aria-label', 'Plek toevoegen');
@@ -285,6 +322,7 @@ export function createPlacePanel(root: HTMLElement, options: {
       const exportButton = button('Export', exportCollection, 'export'); exportButton.setAttribute('aria-label', 'Exporteren');
       tools.append(add, importButton, exportButton);
       body.append(tools);
+      body.append(duration.element);
       if (storageState.status === 'error') message('Opslag vraagt aandacht', storageState.error ?? 'Opnieuw laden kan helpen.')
         .append(button('Opnieuw laden', () => { options.store.reload(); render(); }, 'reload-store'));
       if (!personalRows.length) message(query.value.trim() ? 'Geen persoonlijke plek gevonden' : 'Je plekken bij de hand',
@@ -312,6 +350,7 @@ export function createPlacePanel(root: HTMLElement, options: {
       message('Bekijk een kleiner gebied', 'Zoom verder in om horecalocaties in de omgeving te laden.')
         .append(button('Zoom in', options.onZoom, 'zoom'));
     } else {
+      body.append(duration.element);
       if (context.state === 'loading' || context.state === 'error') {
         const banner = node('div', 'place-load-message'); banner.setAttribute('role', 'status');
         banner.append(node('p', '', context.state === 'loading' ? 'Plekken ophalen… Eerder geladen plekken blijven zichtbaar.'
@@ -369,6 +408,7 @@ export function createPlacePanel(root: HTMLElement, options: {
   const close = (restoreFocus = true) => {
     if (!open) return;
     open = false; root.hidden = true; options.trigger.setAttribute('aria-expanded', 'false');
+    shareGeneration++; duration.stop();
     importGeneration++; if (editor) finishEditor();
     clearTimeout(feedbackTimer); feedback.hidden = true;
     clearTimeout(announcementTimer); announcement.textContent = ''; lastAnnouncement = '';
@@ -425,6 +465,9 @@ export function createPlacePanel(root: HTMLElement, options: {
     },
     setContext(next: DiscoveryContext) { context = next; render(); },
     setSelection(next: PlaceSelection | null, from?: HTMLElement) {
+      if (!next?.place.sources.some(source => source.provider === 'user' && source.id.startsWith('shared:'))) sharedNote.hidden = true;
+      if (next) duration.stop();
+      if (next?.place.id !== selection?.place.id || JSON.stringify(next?.analysisPoint.coordinates) !== JSON.stringify(selection?.analysisPoint.coordinates)) shareGeneration++;
       if (editor && from) finishEditor();
       const changed = next?.place.id !== selection?.place.id;
       selection = next;
@@ -432,5 +475,7 @@ export function createPlacePanel(root: HTMLElement, options: {
         origin = from; if (changed) body.scrollTop = 0; show(); heading.focus({ preventScroll: true });
       } else render();
     },
+    setSharedMessage(text: string) { sharedMessage = text; sharedNote.hidden = false; render(); },
+    destroy() { duration.stop(); duration.destroy(); },
   };
 }

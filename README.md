@@ -104,6 +104,18 @@ Op desktop staat het paneel links onder de zoekbalk. Op mobiel staat het boven e
 
 Eerder geladen plekken blijven bij vernieuwingsfouten beschikbaar, met een herstelactie. Lage zoom, uitgeschakelde horeca, lege gebieden en niet gevonden namen hebben eigen uitleg. Een adres of verplaatst persoonlijk punt krijgt niet automatisch de zonstatus van een horecapin: ontbrekende of mislukte berekeningen worden als onbekend weergegeven.
 
+## Zoeken op zonneduur en zitpunten delen
+
+Open **Ontdek** of **Mijn plekken** en kies **Zoek op zonneduur**. Kies de aankomsttijd voor de kaartdatum en minimaal 15, 30, 60, 90 of 120 minuten directe zon. **Analyseer 6 plekken** rekent zes huidige kandidaten sequentieel door; **Analyseer volgende 6** vervolgt tot maximaal 24. De lokale zoekterm bepaalt de kandidaten. Deze selectie gebruikt de actuele **Alleen zon**-kaartclassificatie niet als voorfilter. Een opgeslagen persoonlijk zitpunt heeft voorrang op de bronpositie.
+
+**Geschikt bij aankomst** sorteert aflopend op resterende **aaneengesloten directe zon**, niet op de som van alle latere zonperioden. Gefilterd licht telt niet mee. Onvolledige of mislukte berekeningen blijven onbekend; **Nog niet berekend** is geen nul zon. Een andere zoekcontext wist oude uitkomsten; rekenen start alleen expliciet. Annuleren stopt het extra werk. Een berekend resultaat opent hetzelfde dagrapport en zet de kaartklok op de aankomsttijd, zonder nieuwe dagjob als punt/datum/instellingen overeenkomen.
+
+Vanwege het geheugenbudget gebruikt iedere stap één tijdelijke groepsworker, die na voltooiing/annulering/selectie wordt beëindigd. Er worden geen parallelle workers per kandidaat gestart. Per punt geldt een deadline van 20 seconden; een traag punt blijft onbekend. De bestaande bron-/modelbeperkingen blijven van toepassing: controleer de werkelijke zitpositie.
+
+**Deel dit zitpunt** in details kopieert een link met analysepositie, datum/tijd en bomeninstelling. Naam, notities, favorietstatus, bronidentiteit en automatische browserpositie worden niet meegestuurd. Bestaande queryparameters worden verwijderd; de selectie staat in het URL-fragment. Bij ontbrekende/geweigerde klembordtoegang verschijnt een geselecteerd, alleen-lezen veld om handmatig te kopiëren.
+
+Een ontvangen link opent **Gedeeld zitpunt** tijdelijk, zonder autosave. Lokaal bewaren gebeurt via **Opslaan**. De bronklok en epoch-tijd leggen hetzelfde moment vast, ook bij de dubbele wintertijd. Een andere ontvangerzone toont dat moment in zijn eigen browserklok met uitleg; er is geen geografische tijdzonelookup. Een ongeldig of onbekend linkformaat geeft een herstelmelding. De link deelt geen berekend rapport of garantie: brondata en opnieuw berekende uitkomsten kunnen veranderen.
+
 ## Mijn plekken en eigen locaties
 
 **Opslaan** bewaart een gevonden horeca- of adresplek op dit apparaat. Dit kan vanuit een locatieregel of de details. Via **Mijn plekken** vind je opgeslagen en zelf toegevoegde plekken terug, ook buiten het huidige kaartgebied. Zoeken in deze verzameling gebruikt namen en persoonlijke notities; de openbare horecalaag en Alleen-zon-filter beperken deze persoonlijke lijst niet.
