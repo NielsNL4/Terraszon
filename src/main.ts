@@ -217,6 +217,7 @@ const venueDetails = createVenueDetailsLoader();
 let detailsRequest: AbortController | null = null, detailsSignature = '', completedDetails: VenueEnrichment | null = null;
 let trees: TreeFeature[] = [];
 let buildings: BuildingFeature[] = [];
+let buildingSnapshotLimited = false;
 let treesEnabled = true;
 let updateFrame = 0;
 let classifyOnNextFrame = false;
@@ -471,13 +472,14 @@ shadowWorker.onmessage = (event: MessageEvent<ShadowWorkerResponse>) => {
   }
   if (result.generation !== obstacleGeneration) return;
   if (result.type === 'mesh') {
+    if (result.mesh.limited) buildingSnapshotLimited = true;
     terraceMap.setShadowMesh(result.mesh);
     return;
   }
   if (result.id !== shadowRequestId) return;
-  terraces = applyTerraceStatuses(terraces, result.statuses);
+  terraces = applyTerraceStatuses(terraces, buildingSnapshotLimited ? result.statuses.map(status => status.status === 'sun' ? { ...status, status: 'unknown' as const } : status) : result.statuses);
   terraceStatusesPending = false;
-  terraceStatusUnavailable = false;
+  terraceStatusUnavailable = buildingSnapshotLimited;
   terraceMap.setTerraces(terraces);
   refreshDiscovery();
 };
@@ -647,6 +649,7 @@ const terraceMap = createTerraceMap(requiredElement<HTMLElement>('#map'), {
     if (place) selectPlace(place, terraceMap.map.getCanvas());
   },
   onBuildings(nextBuildings, capped) {
+    buildingSnapshotLimited = capped;
     buildings = nextBuildings;
     updateObstacles(true, terraceMap.map.getZoom() < 14);
     setLoadingStep(loadBuildings, 'done');

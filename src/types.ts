@@ -36,9 +36,10 @@ export type TreeFeature = Feature<Polygon, BuildingProperties & {
 export type ShadowMesh = {
   origin: [number, number];
   vertices: Float32Array;
+  limited?: boolean;
 };
 
-export type TerraceStatus = 'sun' | 'shade' | 'filtered' | 'night';
+export type TerraceStatus = 'sun' | 'shade' | 'filtered' | 'night' | 'unknown';
 export type TerraceEvidence = 'confirmed' | 'possible' | 'mapped';
 
 export type TerraceProperties = VenueFields & {

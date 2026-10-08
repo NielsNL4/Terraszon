@@ -47,6 +47,12 @@ Dit plan is opgesteld op 7 oktober 2026. T1, T2, T3, T4, T5, T6, F1, F2, F4 en F
 
 ## Aanbevolen bouwvolgorde
 
+**Opstartgeheugenherstel — 8 oktober 2026, vóór F6 op gebruikersverzoek**
+- RAM/OOM-melding tijdens het starten krijgt voorrang. De onbegrensde tegelhoogte-index is vervangen door een begrensd grid plus één exacte kandidaat voor brede contouren; hoogte-inferentie blijft behouden. Een gecontroleerde native-workerproef met een 1°-contour gaf 1.002.001 oude gridcellen/67.665.006 bytes tegenover 793.336 bytes voor de begrensde variant. Dit toont een concrete expansierisico, niet dat iedere gemelde OOM hiermee is bewezen.
+- Schaduwmesh direct in Float32Array, met maximaal 12 MB backing buffer; werkelijke polygonen/coördinaten worden begrensd bij samengevoegde tegelfeatures. Gebouwqueries/view-memory maximaal 12.000 desktop/6.000 mobiel; nieuwe gebouwcachekeys en gepaarde cachelezingen vermijden het tegelijk klonen van alle oude regio's. Bron-/kaartbeperking blijft expliciet; een positieve zonstatus bij een beperkte gebouwsnapshot wordt onbekend.
+- Normale schaduwuitkomsten, grote contourhoogte, polygonen-/coördinatenbudget en meshbuffergrens worden met regressies gecontroleerd. De oude >20.000-gebouwtest is bewust aangepast aan het nieuwe geheugenbudget: gedeeltelijke kleuren blijven behouden, zonder volledige dekking te claimen. F6 blijft de volgende featurefase.
+- Controles geslaagd: 229 tests in 30 bestanden, Oxlint, productiebuild, diffcheck en native dag-/jaarworkerflow. De geheugenproef is synthetisch en geïsoleerd; browser-/GPU-geheugen en een exacte OOM op het apparaat van de gebruiker zijn daarmee niet volledig gediagnosticeerd.
+
 **T1 → T2 → T3 → F1 → F2 → T4 → T5 → F4 → F5 → T6**
 
 Hiermee komt eerst betrouwbaar laden, vervolgens een bruikbaar locatiemenu en daarna het complete zonrapport. T6 optimaliseert op basis van de werkelijk gebouwde flows.

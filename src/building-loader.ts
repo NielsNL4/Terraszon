@@ -17,8 +17,8 @@ export type BuildingData = {
   status: DataCoverage;
   source: 'osm';
 };
-export const MAX_FETCHED_BUILDINGS = 20_000; // minimum per-request limit, not a screen-wide limit
-const MAX_VIEW_BUILDINGS = 60_000;
+export const MAX_FETCHED_BUILDINGS = 12_000;
+const MAX_VIEW_BUILDINGS = 12_000;
 const MAX_AREAS = 24;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 export type CachedArea = { savedAt: number; buildings: CategorizedBuilding[]; status: 'complete' | 'empty'; source: 'osm' };
@@ -45,6 +45,7 @@ export function buildingAreas(bounds: Bounds, mobile = false): Bounds[] {
 }
 
 export function createBuildingLoader(options: LoaderOptions = {}) {
+  const maximumBuildings = options.mobile ? 6_000 : MAX_VIEW_BUILDINGS;
   const store: AreaStore = options.store ?? {
     async get(key) { try { return JSON.parse(localStorage.getItem(key) ?? 'null'); } catch { return null; } },
     async set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Memory remains available. */ } },
@@ -54,12 +55,12 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
   const memory = new Map<string, CachedArea>();
   const inFlight = new Map<string, SourceJob>();
   let wanted: Bounds[] = [];
-  const keyFor = (area: Bounds) => `terraszon:v4:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(':')}`;
+  const keyFor = (area: Bounds) => `terraszon:v5:building-cell:${[area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(':')}`;
   const remember = (key: string, cached: CachedArea) => {
     memory.delete(key);
     memory.set(key, cached);
     let count = [...memory.values()].reduce((sum, area) => sum + area.buildings.length, 0);
-    while (memory.size > MAX_AREAS || count > MAX_VIEW_BUILDINGS) {
+    while (memory.size > MAX_AREAS || count > maximumBuildings) {
       const first = memory.keys().next().value!;
       count -= memory.get(first)!.buildings.length;
       memory.delete(first);
@@ -74,7 +75,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
     }
     if (!cached || cached.source !== 'osm' || !['complete', 'empty'].includes(cached.status)
       || !Number.isFinite(cached.savedAt) || cached.savedAt > Date.now() || Date.now() - cached.savedAt >= (cached.status === 'empty' ? 60_000 : CACHE_TTL) || !Array.isArray(cached.buildings)
-      || cached.buildings.length > MAX_VIEW_BUILDINGS) return null;
+      || cached.buildings.length > maximumBuildings) return null;
     remember(key, cached);
     return cached;
   };
@@ -112,7 +113,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       const bbox = [area.south, area.west, area.north, area.east].map(v => v.toFixed(6)).join(',');
       return `way["building"](${bbox});relation["building"]["type"="multipolygon"](${bbox});way["building:part"](${bbox});relation["building:part"]["type"="multipolygon"](${bbox});`;
     }).join('');
-    const limit = options.mobile ? Math.max(4_000, 3_000 * areas.length) : Math.max(MAX_FETCHED_BUILDINGS, 8_000 * areas.length);
+    const limit = Math.min(maximumBuildings, options.mobile ? Math.max(4_000, 3_000 * areas.length) : Math.max(MAX_FETCHED_BUILDINGS, 8_000 * areas.length));
     const query = `[out:json][timeout:15][maxsize:67108864];(${selectors});out geom ${limit + 1};`;
     let lastError: unknown;
     for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -186,12 +187,12 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       status: capped || viewLimited || failedAreas || partialAreas || loadedAreas < areas.length ? 'partial' : buildings.size ? 'complete' : 'empty' });
     const merge = (features: CategorizedBuilding[]) => {
       for (const building of features) {
-        if (buildings.size >= MAX_VIEW_BUILDINGS && !buildings.has(building.properties.id)) { viewLimited = true; break; }
+        if (buildings.size >= maximumBuildings && !buildings.has(building.properties.id)) { viewLimited = true; break; }
         buildings.set(building.properties.id, building);
       }
     };
     const replaceContribution = (key: string, features: CategorizedBuilding[]) => {
-      contributions.set(key, features);
+      contributions.set(key, features.slice(0, maximumBuildings));
       buildings.clear(); viewLimited = false;
       for (const records of contributions.values()) merge(records);
     };
@@ -236,7 +237,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
       const unique = new Map<string, CategorizedBuilding>();
       let limited = false;
       for (const building of [...(full ? [] : result.buildings), ...results.flatMap(child => child.buildings)]) {
-        if (unique.size >= MAX_VIEW_BUILDINGS && !unique.has(building.properties.id)) { limited = true; continue; }
+        if (unique.size >= maximumBuildings && !unique.has(building.properties.id)) { limited = true; continue; }
         unique.set(building.properties.id, building);
       }
       const merged = [...unique.values()];
@@ -248,14 +249,18 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
         failedAreas: batch.length > 1 ? results.reduce((count, child) => count + child.failedAreas, 0) : results.some(child => child.failedAreas) ? 1 : 0 };
     };
     try {
-      const cached = await abortable(Promise.all(areas.map(cachedArea)), controller.signal);
-      for (let index = 0; index < areas.length; index++) {
-        const record = cached[index];
-        if (record) {
-          contributions.set(keyFor(areas[index]), record.buildings);
-          merge(record.buildings); loadedAreas++; completeAreas++; if (record.status === 'empty') emptyAreas++;
+      // Process at most two cloned cache regions at a time, releasing each
+      // batch before the next read; stop collecting when the view is full.
+      for (let index = 0; index < areas.length; index += 2) {
+        if (buildings.size >= maximumBuildings) { capped = true; break; }
+        const batch = areas.slice(index, index + 2), cached = await abortable(Promise.all(batch.map(cachedArea)), controller.signal);
+        for (let i = 0; i < batch.length; i++) {
+          const record = cached[i];
+          if (record) {
+            contributions.set(keyFor(batch[i]), record.buildings);
+            merge(record.buildings); loadedAreas++; completeAreas++; if (record.status === 'empty') emptyAreas++;
+          } else pending.push(batch[i]);
         }
-        else pending.push(areas[index]);
       }
       if (loadedAreas) onProgress?.(snapshot());
       const reused = new Map<SourceJob, Bounds[]>();
@@ -283,7 +288,7 @@ export function createBuildingLoader(options: LoaderOptions = {}) {
             const result = await resolveArea(batch, 0, (features) => {
               if (finished || controller.signal.aborted) return;
               for (const feature of features) {
-                if (provisional.size < MAX_VIEW_BUILDINGS || provisional.has(feature.properties.id)) provisional.set(feature.properties.id, feature);
+                if (provisional.size < maximumBuildings || provisional.has(feature.properties.id)) provisional.set(feature.properties.id, feature);
               }
               replaceContribution(key, [...provisional.values()]);
               onProgress?.(snapshot());

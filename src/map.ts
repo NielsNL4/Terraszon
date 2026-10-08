@@ -18,6 +18,7 @@ import { abortable } from './requests';
 import { loadPalette, UNKNOWN_BUILDING_COLOR } from './building-palette';
 import { treeMarkers } from './trees';
 import { InstancedTreeLayer } from './tree-layer';
+import { selectShadowBuildings } from './shadows';
 import type { BuildingFeature, CategorizedBuilding, ShadowMesh, TerraceFeature, TreeFeature } from './types';
 import { terracePlace, type Place } from './places';
 
@@ -337,10 +338,11 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       return;
     }
 
+    const selected = selectShadowBuildings(buildings);
     const fingerprint = `${map.getZoom().toFixed(2)}:${[...seen].sort().join('|')}`;
     if (fingerprint === buildingFingerprint) return;
     buildingFingerprint = fingerprint;
-    callbacks.onBuildings(buildings, buildings.length === MAX_BUILDINGS);
+    callbacks.onBuildings(selected.buildings, selected.limited || buildings.length === MAX_BUILDINGS);
   };
 
   map.on('load', () => {
@@ -449,7 +451,7 @@ export function createTerraceMap(container: HTMLElement, callbacks: MapCallbacks
       const properties = feature.properties;
       const selected = terraceData.find(terrace => terrace.properties.id === properties.id);
       if (selected && callbacks.onPlaceSelect) { callbacks.onPlaceSelect(terracePlace(selected)); return; }
-      const status = properties.status === 'sun'
+      const status = properties.status === 'unknown' ? 'Zonstatus onbekend' : properties.status === 'sun'
         ? 'In de zon'
         : properties.status === 'filtered' ? 'Mogelijke boomschaduw / gefilterd licht'
           : properties.status === 'shade' ? 'Gebouwschaduw' : 'Geen daglicht';

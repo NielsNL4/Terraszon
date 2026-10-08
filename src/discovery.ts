@@ -43,7 +43,7 @@ export const amenityLabel = (amenity?: string) => amenity && Object.hasOwn(ameni
 export const evidenceLabel = (evidence: TerraceEvidence) => evidence === 'confirmed' ? 'Terras bevestigd'
   : evidence === 'mapped' ? 'Terras ingetekend' : 'Terras niet bevestigd';
 export const statusLabel = (status: TerraceStatus | null) => status === 'sun' ? 'In de zon' : status === 'shade' ? 'Gebouwschaduw'
-  : status === 'filtered' ? 'Mogelijk gefilterd licht' : status === 'night' ? 'Geen direct daglicht' : 'Zonstatus berekenen…';
+  : status === 'filtered' ? 'Mogelijk gefilterd licht' : status === 'night' ? 'Geen direct daglicht' : status === 'unknown' ? 'Zonstatus onbekend' : 'Zonstatus berekenen…';
 export function sourceFact(field: 'terrace' | 'wheelchair' | 'covered' | 'seasonal', value?: string): string | undefined {
   if (!value?.trim()) return undefined;
   const labels: Record<typeof field, Record<string, string>> = {

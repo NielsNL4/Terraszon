@@ -14,6 +14,22 @@ const MAX_MERCATOR_LATITUDE = 85.051129;
 export const MIN_SUN_ALTITUDE = 0.5;
 export const MAX_SHADOW_LENGTH = 500;
 export const SHADOW_VERTEX_STRIDE = 5;
+export const MAX_SHADOW_MESH_FLOATS = 3_000_000; // 12 MB, also bounds transient allocation
+
+export function selectShadowBuildings(buildings: BuildingFeature[], maximumCoordinates = 50_000, maximumPolygons = 1_500) {
+  const selected: BuildingFeature[] = [];
+  let coordinates = 0, limited = false;
+  for (const building of buildings) {
+    const polygons = building.geometry.type === 'Polygon' ? [building.geometry.coordinates] : building.geometry.coordinates;
+    for (let index = 0; index < polygons.length; index++) {
+      const rings = polygons[index], count = rings.reduce((sum, ring) => sum + ring.length, 0);
+      if (selected.length >= maximumPolygons || coordinates + count > maximumCoordinates) { limited = true; continue; }
+      coordinates += count;
+      selected.push(polygons.length === 1 ? building : { ...building, geometry: { type: 'Polygon', coordinates: rings }, properties: { ...building.properties, id: `${building.properties.id}:polygon:${index}` } });
+    }
+  }
+  return { buildings: selected, limited };
+}
 
 type Bounds = {
   minX: number;
@@ -88,29 +104,30 @@ function mercatorPosition(position: Position): [number, number, number] {
 }
 
 function addVertex(
-  vertices: number[],
+  vertices: Float32Array,
+  offset: number,
   position: Position,
   origin: [number, number],
   height: number,
   projected: number,
-): void {
+): number {
   const [x, y, metersToMercator] = mercatorPosition(position);
-  vertices.push(
-    x - origin[0],
-    y - origin[1],
-    height * metersToMercator,
-    MAX_SHADOW_LENGTH * metersToMercator,
-    projected,
-  );
+  vertices[offset++] = x - origin[0]; vertices[offset++] = y - origin[1];
+  vertices[offset++] = height * metersToMercator; vertices[offset++] = MAX_SHADOW_LENGTH * metersToMercator; vertices[offset++] = projected;
+  return offset;
 }
 
 export function buildShadowMesh(polygons: PreparedShadowPolygon[]): ShadowMesh {
   const firstPoint = polygons[0]?.rings[0]?.[0];
   const [originX, originY] = firstPoint ? mercatorPosition(firstPoint) : [0, 0, 0];
   const origin: [number, number] = [originX, originY];
-  const vertices: number[] = [];
+  const estimate = polygons.reduce((sum, polygon) => sum + (polygon.rings.reduce((n, ring) => n + ring.length, 0) * 12 + polygon.rings.length * 12) * SHADOW_VERTEX_STRIDE, 0);
+  const vertices = new Float32Array(Math.min(estimate, MAX_SHADOW_MESH_FLOATS));
+  let offset = 0, limited = false;
 
   for (const polygon of polygons) {
+    const upper = (polygon.rings.reduce((sum, ring) => sum + ring.length, 0) * 12 + polygon.rings.length * 12) * SHADOW_VERTEX_STRIDE;
+    if (offset + upper > vertices.length) { limited = true; continue; }
     const flattened = flatten(polygon.rings);
     const triangles = earcut(flattened.vertices, flattened.holes, flattened.dimensions);
     const pointAt = (index: number): Position => [
@@ -120,9 +137,9 @@ export function buildShadowMesh(polygons: PreparedShadowPolygon[]): ShadowMesh {
 
     for (let index = 0; index < triangles.length; index += 3) {
       for (const projected of [0, 1]) {
-        addVertex(vertices, pointAt(triangles[index]), origin, polygon.height, projected);
-        addVertex(vertices, pointAt(triangles[index + 1]), origin, polygon.height, projected);
-        addVertex(vertices, pointAt(triangles[index + 2]), origin, polygon.height, projected);
+        offset = addVertex(vertices, offset, pointAt(triangles[index]), origin, polygon.height, projected);
+        offset = addVertex(vertices, offset, pointAt(triangles[index + 1]), origin, polygon.height, projected);
+        offset = addVertex(vertices, offset, pointAt(triangles[index + 2]), origin, polygon.height, projected);
       }
     }
 
@@ -130,17 +147,17 @@ export function buildShadowMesh(polygons: PreparedShadowPolygon[]): ShadowMesh {
       for (let index = 0; index < ring.length; index += 1) {
         const current = ring[index];
         const next = ring[(index + 1) % ring.length];
-        addVertex(vertices, current, origin, polygon.height, 0);
-        addVertex(vertices, next, origin, polygon.height, 0);
-        addVertex(vertices, next, origin, polygon.height, 1);
-        addVertex(vertices, current, origin, polygon.height, 0);
-        addVertex(vertices, next, origin, polygon.height, 1);
-        addVertex(vertices, current, origin, polygon.height, 1);
+        offset = addVertex(vertices, offset, current, origin, polygon.height, 0);
+        offset = addVertex(vertices, offset, next, origin, polygon.height, 0);
+        offset = addVertex(vertices, offset, next, origin, polygon.height, 1);
+        offset = addVertex(vertices, offset, current, origin, polygon.height, 0);
+        offset = addVertex(vertices, offset, next, origin, polygon.height, 1);
+        offset = addVertex(vertices, offset, current, origin, polygon.height, 1);
       }
     }
   }
 
-  return { origin, vertices: new Float32Array(vertices) };
+  return { origin, vertices: vertices.subarray(0, offset), ...(limited ? { limited: true } : {}) };
 }
 
 export function shadowVector(

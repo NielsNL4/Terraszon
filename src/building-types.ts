@@ -168,6 +168,8 @@ export function createTileHeightResolver(
   // Tiles merge thousands of footprints under one ID. Match by position only,
   // never by ID, and index individual polygons to keep the join inexpensive.
   const cells = new Map<string, Array<{ rings: Position[][]; height: number }>>();
+  const large: Array<{ rings: Position[][]; height: number; west: number; east: number; south: number; north: number }> = [];
+  let indexedReferences = 0;
   const cell = (value: number) => Math.floor(value * 1_000);
   for (const tile of tiles) {
     const height = Number(tile.properties?.render_height);
@@ -182,6 +184,14 @@ export function createTileHeightResolver(
         south = Math.min(south, y); north = Math.max(north, y);
       }
       const entry = { rings, height };
+      const references = (east - west + 1) * (north - south + 1);
+      if (!Number.isFinite(references) || references < 1) continue;
+      // Merged/erroneously wide tile footprints must never expand into millions
+      // of grid entries. Keep one exact candidate instead of duplicating it.
+      if (references > 4096 || indexedReferences + references > 50_000) {
+        large.push({ ...entry, west, east, south, north }); continue;
+      }
+      indexedReferences += references;
       for (let x = west; x <= east; x++) {
         for (let y = south; y <= north; y++) {
           const key = `${x}:${y}`;
@@ -194,7 +204,8 @@ export function createTileHeightResolver(
   return (buildings: CategorizedBuilding[]) => buildings.map((building) => {
     if (building.properties.hasHeight) return building;
     const point = buildingSample(building);
-    const candidates = cells.get(`${cell(point[0])}:${cell(point[1])}`) ?? [];
+    const x = cell(point[0]), y = cell(point[1]);
+    const candidates = [...(cells.get(`${x}:${y}`) ?? []), ...large.filter(entry => x >= entry.west && x <= entry.east && y >= entry.south && y <= entry.north)];
     const match = candidates.find(({ rings }) => pointInRing(point, rings[0])
       && !rings.slice(1).some((hole) => pointInRing(point, hole)));
     return match ? { ...building, properties: {

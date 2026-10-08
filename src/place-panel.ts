@@ -28,7 +28,7 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, 
   return element;
 }
 
-function statusNode(status: keyof typeof statusIcons | null, label = statusLabel(status === 'pending' || status === 'unknown' ? null : status)) {
+function statusNode(status: keyof typeof statusIcons | null, label = statusLabel(status === 'pending' ? null : status)) {
   const badge = node('span', `place-status ${status ?? 'pending'}`);
   const symbol = node('span', 'place-status-icon'); symbol.innerHTML = statusIcons[status ?? 'pending'];
   badge.append(symbol, node('span', '', label));

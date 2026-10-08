@@ -140,7 +140,7 @@ describe('gebouwdata laden', () => {
     expect(setItem).toHaveBeenCalledOnce();
   });
 
-  it('laadt op een groot scherm meer dan 20.000 gebouwen zonder alle kleuren weg te gooien', async () => {
+  it('begrenst grote beelden op 12.000 gebouwen en meldt gedeeltelijke dekking', async () => {
     const big = { south: 53.2121, west: 6.5366, north: 53.2355, east: 6.5870 };
     const { fetchMock } = setup([]);
     let call = 0;
@@ -153,8 +153,9 @@ describe('gebouwdata laden', () => {
     });
     const progress = vi.fn();
     const result = await fetchBuildings(big, new AbortController().signal, progress);
-    expect(result.buildings.length).toBeGreaterThan(20_000);
-    expect(result.capped).toBe(false);
+    expect(result.buildings.length).toBe(12_000);
+    expect(result.capped).toBe(true);
+    expect(result.status).toBe('partial');
     expect(result.failedAreas).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(Math.ceil(buildingAreas(big).length / 4));
     expect(progress.mock.calls[0][0].buildings).toHaveLength(8_400);
